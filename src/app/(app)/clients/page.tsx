@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Pencil, Plus, PawPrint, Trash2 } from "lucide-react";
+import { Pencil, Plus, PawPrint, Trash2, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -10,10 +10,20 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Textarea } from "@/components/ui/Field";
+import { Badge } from "@/components/ui/Badge";
 
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 
-const EMPTY_FORM = { name: "", address: "", phone: "", email: "", notes: "" };
+const EMPTY_FORM = {
+  name: "",
+  address: "",
+  phone: "",
+  email: "",
+  is_company: false,
+  company_code: "",
+  vat_code: "",
+  notes: "",
+};
 
 export default function ClientsPage() {
   const supabase = createClient();
@@ -62,6 +72,9 @@ export default function ClientsPage() {
       address: c.address ?? "",
       phone: c.phone ?? "",
       email: c.email ?? "",
+      is_company: c.is_company,
+      company_code: c.company_code ?? "",
+      vat_code: c.vat_code ?? "",
       notes: c.notes ?? "",
     });
     setError(null);
@@ -78,6 +91,9 @@ export default function ClientsPage() {
       address: form.address.trim() || null,
       phone: form.phone.trim() || null,
       email: form.email.trim() || null,
+      is_company: form.is_company,
+      company_code: form.is_company ? form.company_code.trim() || null : null,
+      vat_code: form.is_company ? form.vat_code.trim() || null : null,
       notes: form.notes.trim() || null,
     };
 
@@ -135,6 +151,7 @@ export default function ClientsPage() {
             <EmptyState message="Klientų dar nėra. Pridėkite pirmąjį." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -149,7 +166,12 @@ export default function ClientsPage() {
             <tbody className="divide-y divide-slate-100">
               {filtered.map((c) => (
                 <tr key={c.id} className="hover:bg-slate-50">
-                  <td className="px-5 py-3 font-medium text-slate-900">{c.name}</td>
+                  <td className="px-5 py-3 font-medium text-slate-900">
+                    {c.name}
+                    {c.is_company && (
+                      <Badge className="ml-2 bg-indigo-50 text-indigo-700">Juridinis</Badge>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-slate-600">{c.address ?? "—"}</td>
                   <td className="px-5 py-3 text-slate-600">{c.phone ?? "—"}</td>
                   <td className="px-5 py-3 text-slate-600">{c.email ?? "—"}</td>
@@ -183,10 +205,17 @@ export default function ClientsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "Redaguoti klientą" : "Naujas klientas"}>
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? "Redaguoti klientą" : "Naujas klientas"}
+        icon={<Users size={18} />}
+        iconClassName="bg-indigo-50 text-indigo-600"
+      >
         <form onSubmit={handleSubmit} className="space-y-3">
           <Input
             label="Pavadinimas"
@@ -212,6 +241,32 @@ export default function ClientsPage() {
               onChange={(e) => setForm({ ...form, email: e.target.value })}
             />
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.is_company}
+              onChange={(e) => setForm({ ...form, is_company: e.target.checked })}
+              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+            />
+            Juridinis asmuo
+          </label>
+
+          {form.is_company && (
+            <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Input
+                label="Įmonės kodas"
+                value={form.company_code}
+                onChange={(e) => setForm({ ...form, company_code: e.target.value })}
+              />
+              <Input
+                label="PVM kodas"
+                value={form.vat_code}
+                onChange={(e) => setForm({ ...form, vat_code: e.target.value })}
+              />
+            </div>
+          )}
+
           <Textarea
             label="Pastabos"
             value={form.notes}

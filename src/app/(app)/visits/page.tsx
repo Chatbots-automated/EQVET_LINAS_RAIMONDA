@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Plus, Trash2, X } from "lucide-react";
+import { ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
-import { ADMINISTRATION_ROUTES, getRouteWithdrawalDays, requiresWithdrawal } from "@/lib/administrationRoutes";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
@@ -24,7 +23,6 @@ interface UsageLine {
   batch_id: string;
   qty: string;
   unit: Unit | "";
-  administration_route: string;
 }
 
 const EMPTY_VISIT_FORM = {
@@ -36,35 +34,10 @@ const EMPTY_VISIT_FORM = {
   service_price: "",
   vet_name: "",
   notes: "",
-  withdrawal_until_meat: "",
-  withdrawal_until_milk: "",
 };
 
 function emptyLine(): UsageLine {
-  return { product_id: "", batch_id: "", qty: "", unit: "", administration_route: "" };
-}
-
-/** Max withdrawal days across a set of lines, route-aware, falling back to the product's default. */
-function maxWithdrawalDays(
-  lines: { product_id: string; administration_route: string }[],
-  products: Product[],
-  type: "meat" | "milk"
-): number {
-  let max = 0;
-  for (const line of lines) {
-    if (!line.product_id) continue;
-    const product = products.find((p) => p.id === line.product_id);
-    if (!product) continue;
-    const days = getRouteWithdrawalDays(product, line.administration_route, type);
-    if (days && days > max) max = days;
-  }
-  return max;
-}
-
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return { product_id: "", batch_id: "", qty: "", unit: "" };
 }
 
 export default function VisitsPage() {
@@ -97,6 +70,11 @@ function VisitsPageInner() {
   const [addLine, setAddLine] = useState<UsageLine>(emptyLine());
   const [addLineSaving, setAddLineSaving] = useState(false);
   const [addLineError, setAddLineError] = useState<string | null>(null);
+
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [detailForm, setDetailForm] = useState(EMPTY_VISIT_FORM);
+  const [detailSaving, setDetailSaving] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   async function loadReference() {
     const [{ data: a }, { data: cl }, { data: p }, { data: b }] = await Promise.all([
@@ -145,32 +123,14 @@ function VisitsPageInner() {
     return data ?? "";
   }
 
-  function calculateWithdrawalDate(linesToUse: UsageLine[]) {
-    const maxMeat = maxWithdrawalDays(linesToUse, products, "meat");
-    const maxMilk = maxWithdrawalDays(linesToUse, products, "milk");
-    setForm((prev) => ({
-      ...prev,
-      withdrawal_until_meat: maxMeat > 0 ? addDays(prev.visit_date, maxMeat) : prev.withdrawal_until_meat,
-      withdrawal_until_milk: maxMilk > 0 ? addDays(prev.visit_date, maxMilk) : prev.withdrawal_until_milk,
-    }));
-  }
-
   async function handleLineProductChange(index: number, productId: string) {
     const product = products.find((p) => p.id === productId);
     const suggested = productId ? await suggestBatch(productId) : "";
-    const next: UsageLine[] = lines.map((l, i) =>
-      i === index
-        ? { ...l, product_id: productId, batch_id: suggested, unit: product?.unit ?? "", administration_route: "" }
-        : l
+    setLines((prev) =>
+      prev.map((l, i) =>
+        i === index ? { ...l, product_id: productId, batch_id: suggested, unit: product?.unit ?? "" } : l
+      )
     );
-    setLines(next);
-    calculateWithdrawalDate(next);
-  }
-
-  function updateLineRoute(index: number, route: string) {
-    const next = lines.map((l, i) => (i === index ? { ...l, administration_route: route } : l));
-    setLines(next);
-    calculateWithdrawalDate(next);
   }
 
   function updateLine(index: number, patch: Partial<UsageLine>) {
@@ -178,37 +138,7 @@ function VisitsPageInner() {
   }
 
   function removeLine(index: number) {
-    const next = lines.filter((_, i) => i !== index);
-    setLines(next);
-    calculateWithdrawalDate(next);
-  }
-
-  // Recomputes and persists a visit's withdrawal dates from its current
-  // usage_items (route-aware), so adding/removing a product after the visit
-  // was created keeps the stored withdrawal window accurate.
-  async function recomputeVisitWithdrawal(visitId: string, visitDate: string) {
-    const { data: items } = await supabase
-      .from("usage_items")
-      .select("product_id, administration_route")
-      .eq("visit_id", visitId);
-    const maxMeat = maxWithdrawalDays(
-      (items ?? []).map((i) => ({ product_id: i.product_id, administration_route: i.administration_route ?? "" })),
-      products,
-      "meat"
-    );
-    const maxMilk = maxWithdrawalDays(
-      (items ?? []).map((i) => ({ product_id: i.product_id, administration_route: i.administration_route ?? "" })),
-      products,
-      "milk"
-    );
-    if (maxMeat === 0 && maxMilk === 0) return;
-    await supabase
-      .from("visits")
-      .update({
-        withdrawal_until_meat: maxMeat > 0 ? addDays(visitDate, maxMeat) : null,
-        withdrawal_until_milk: maxMilk > 0 ? addDays(visitDate, maxMilk) : null,
-      })
-      .eq("id", visitId);
+    setLines((prev) => prev.filter((_, i) => i !== index));
   }
 
   function openCreate() {
@@ -240,8 +170,6 @@ function VisitsPageInner() {
         service_price: form.service_price ? Number(form.service_price) : null,
         vet_name: form.vet_name.trim() || null,
         notes: form.notes.trim() || null,
-        withdrawal_until_meat: form.withdrawal_until_meat || null,
-        withdrawal_until_milk: form.withdrawal_until_milk || null,
       })
       .select()
       .single();
@@ -262,7 +190,6 @@ function VisitsPageInner() {
         batch_id: line.batch_id,
         qty: Number(line.qty),
         unit: line.unit as Unit,
-        administration_route: line.administration_route || null,
       });
       if (usageError) usageErrors.push(usageError.message);
     }
@@ -309,7 +236,6 @@ function VisitsPageInner() {
       alert(`Nepavyko pašalinti: ${error.message}`);
       return;
     }
-    await recomputeVisitWithdrawal(visitId, detailVisit?.visit_date ?? new Date().toISOString().slice(0, 10));
     loadVisits();
     loadReference();
     const { data } = await supabase.from("visit_history_view").select("*").eq("visit_id", visitId).single();
@@ -330,17 +256,65 @@ function VisitsPageInner() {
       batch_id: addLine.batch_id,
       qty: Number(addLine.qty),
       unit: addLine.unit as Unit,
-      administration_route: addLine.administration_route || null,
     });
     setAddLineSaving(false);
     if (error) {
       setAddLineError(error.message);
       return;
     }
-    await recomputeVisitWithdrawal(detailVisit.visit_id, detailVisit.visit_date);
     setAddLine(emptyLine());
     loadVisits();
     loadReference();
+    const { data } = await supabase
+      .from("visit_history_view")
+      .select("*")
+      .eq("visit_id", detailVisit.visit_id)
+      .single();
+    if (data) setDetailVisit(data);
+  }
+
+  function openDetail(v: Visit) {
+    setDetailVisit(v);
+    setEditingDetails(false);
+    setDetailError(null);
+    setDetailForm({
+      animal_id: v.animal_id ?? "",
+      visit_date: v.visit_date,
+      reason: v.reason ?? "",
+      diagnosis: v.diagnosis ?? "",
+      services: v.services ?? "",
+      service_price: v.service_price?.toString() ?? "",
+      vet_name: v.vet_name ?? "",
+      notes: v.notes ?? "",
+    });
+  }
+
+  async function handleSaveDetails() {
+    if (!detailVisit) return;
+    setDetailSaving(true);
+    setDetailError(null);
+
+    const { error } = await supabase
+      .from("visits")
+      .update({
+        visit_date: detailForm.visit_date,
+        reason: detailForm.reason.trim() || null,
+        diagnosis: detailForm.diagnosis.trim() || null,
+        services: detailForm.services.trim() || null,
+        service_price: detailForm.service_price ? Number(detailForm.service_price) : null,
+        vet_name: detailForm.vet_name.trim() || null,
+        notes: detailForm.notes.trim() || null,
+      })
+      .eq("id", detailVisit.visit_id);
+
+    setDetailSaving(false);
+    if (error) {
+      setDetailError(error.message);
+      return;
+    }
+
+    setEditingDetails(false);
+    loadVisits();
     const { data } = await supabase
       .from("visit_history_view")
       .select("*")
@@ -384,6 +358,7 @@ function VisitsPageInner() {
             <EmptyState message="Vizitų dar nėra." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -399,7 +374,7 @@ function VisitsPageInner() {
                 <tr
                   key={v.visit_id}
                   className="cursor-pointer hover:bg-slate-50"
-                  onClick={() => setDetailVisit(v)}
+                  onClick={() => openDetail(v)}
                 >
                   <td className="px-5 py-3 text-slate-600">{formatDate(v.visit_date)}</td>
                   <td className="px-5 py-3 font-medium text-slate-900">{v.animal_tag ?? "—"}</td>
@@ -414,11 +389,19 @@ function VisitsPageInner() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
       {/* Create visit modal */}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Naujas vizitas" wide>
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Naujas vizitas"
+        icon={<ClipboardList size={18} />}
+        iconClassName="bg-rose-50 text-rose-600"
+        wide
+      >
         <form onSubmit={handleCreateSubmit} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <Select
@@ -471,25 +454,11 @@ function VisitsPageInner() {
             />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Input
-              label="Veterinarijos gydytojas"
-              value={form.vet_name}
-              onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
-            />
-            <Input
-              label="Išlauka mėsai iki"
-              type="date"
-              value={form.withdrawal_until_meat}
-              onChange={(e) => setForm({ ...form, withdrawal_until_meat: e.target.value })}
-            />
-            <Input
-              label="Išlauka pienui iki"
-              type="date"
-              value={form.withdrawal_until_milk}
-              onChange={(e) => setForm({ ...form, withdrawal_until_milk: e.target.value })}
-            />
-          </div>
+          <Input
+            label="Veterinarijos gydytojas"
+            value={form.vet_name}
+            onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
+          />
 
           <Textarea
             label="Pastabos"
@@ -507,86 +476,49 @@ function VisitsPageInner() {
             <div className="space-y-2">
               {lines.map((line, i) => {
                 const options = batchesForProduct(line.product_id);
-                const lineProduct = products.find((p) => p.id === line.product_id);
-                const showRoutes = requiresWithdrawal(lineProduct?.category);
-                const meatDays = showRoutes ? getRouteWithdrawalDays(lineProduct, line.administration_route, "meat") : null;
-                const milkDays = showRoutes ? getRouteWithdrawalDays(lineProduct, line.administration_route, "milk") : null;
                 return (
-                  <div key={i} className="rounded-lg border border-slate-200 p-2">
-                    <div className="grid grid-cols-12 items-end gap-2">
-                      <select
-                        value={line.product_id}
-                        onChange={(e) => handleLineProductChange(i, e.target.value)}
-                        className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
-                      >
-                        <option value="">— Produktas —</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={line.batch_id}
-                        onChange={(e) => updateLine(i, { batch_id: e.target.value })}
-                        className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
-                        disabled={!line.product_id}
-                      >
-                        <option value="">— Partija —</option>
-                        {options.map((b) => (
-                          <option key={b.batch_id} value={b.batch_id}>
-                            {b.lot ?? "be žymos"} · liko {formatQty(b.qty_left, b.unit)}
-                            {b.expiry_date ? ` · iki ${formatDate(b.expiry_date)}` : ""}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="Kiekis"
-                        value={line.qty}
-                        onChange={(e) => updateLine(i, { qty: e.target.value })}
-                        className="col-span-3 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeLine(i)}
-                        className="col-span-1 flex justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-
-                    {showRoutes && (
-                      <div className="mt-2 pl-1">
-                        <label className="mb-1 block text-[11px] font-medium text-slate-600">Suleidimo būdas</label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ADMINISTRATION_ROUTES.map((route) => (
-                            <button
-                              key={route.code}
-                              type="button"
-                              onClick={() => updateLineRoute(i, route.code)}
-                              className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors ${
-                                line.administration_route === route.code
-                                  ? "border-emerald-600 bg-emerald-600 text-white"
-                                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                              }`}
-                            >
-                              {route.label}
-                            </button>
-                          ))}
-                        </div>
-                        {(meatDays || milkDays) && (
-                          <div className="mt-1.5 flex items-center gap-3 rounded border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs text-amber-800">
-                            <span className="flex items-center gap-1 font-semibold text-amber-900">
-                              <AlertTriangle size={12} /> Karencija:
-                            </span>
-                            {meatDays ? <span>🥩 {meatDays} d.</span> : null}
-                            {milkDays ? <span>🥛 {milkDays} d.</span> : null}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                  <div key={i} className="grid grid-cols-12 items-end gap-2 rounded-lg border border-slate-200 p-2">
+                    <select
+                      value={line.product_id}
+                      onChange={(e) => handleLineProductChange(i, e.target.value)}
+                      className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                    >
+                      <option value="">— Produktas —</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={line.batch_id}
+                      onChange={(e) => updateLine(i, { batch_id: e.target.value })}
+                      className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                      disabled={!line.product_id}
+                    >
+                      <option value="">— Partija —</option>
+                      {options.map((b) => (
+                        <option key={b.batch_id} value={b.batch_id}>
+                          {b.lot ?? "be žymos"} · liko {formatQty(b.qty_left, b.unit)}
+                          {b.expiry_date ? ` · iki ${formatDate(b.expiry_date)}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Kiekis"
+                      value={line.qty}
+                      onChange={(e) => updateLine(i, { qty: e.target.value })}
+                      className="col-span-3 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeLine(i)}
+                      className="col-span-1 flex justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
                 );
               })}
@@ -611,36 +543,106 @@ function VisitsPageInner() {
         open={!!detailVisit}
         onClose={() => setDetailVisit(null)}
         title={detailVisit ? `Vizitas · ${detailVisit.animal_tag ?? "—"} · ${formatDate(detailVisit.visit_date)}` : ""}
+        icon={<ClipboardList size={18} />}
+        iconClassName="bg-rose-50 text-rose-600"
         wide
       >
         {detailVisit && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <div className="text-xs text-slate-500">Priežastis</div>
-                <div>{detailVisit.reason || "—"}</div>
+            {editingDetails ? (
+              <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Vizito data"
+                    type="date"
+                    required
+                    value={detailForm.visit_date}
+                    onChange={(e) => setDetailForm({ ...detailForm, visit_date: e.target.value })}
+                  />
+                  <Input
+                    label="Veterinarijos gydytojas"
+                    value={detailForm.vet_name}
+                    onChange={(e) => setDetailForm({ ...detailForm, vet_name: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Priežastis"
+                    value={detailForm.reason}
+                    onChange={(e) => setDetailForm({ ...detailForm, reason: e.target.value })}
+                  />
+                  <Input
+                    label="Diagnozė"
+                    value={detailForm.diagnosis}
+                    onChange={(e) => setDetailForm({ ...detailForm, diagnosis: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Suteiktos paslaugos"
+                    value={detailForm.services}
+                    onChange={(e) => setDetailForm({ ...detailForm, services: e.target.value })}
+                  />
+                  <Input
+                    label="Paslaugos kaina"
+                    type="number"
+                    step="any"
+                    value={detailForm.service_price}
+                    onChange={(e) => setDetailForm({ ...detailForm, service_price: e.target.value })}
+                  />
+                </div>
+                <Textarea
+                  label="Pastabos"
+                  value={detailForm.notes}
+                  onChange={(e) => setDetailForm({ ...detailForm, notes: e.target.value })}
+                />
+
+                {detailError && (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{detailError}</p>
+                )}
+
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="secondary" onClick={() => setEditingDetails(false)}>
+                    Atšaukti
+                  </Button>
+                  <Button type="button" onClick={handleSaveDetails} disabled={detailSaving}>
+                    {detailSaving ? "Saugoma..." : "Išsaugoti"}
+                  </Button>
+                </div>
               </div>
-              <div>
-                <div className="text-xs text-slate-500">Diagnozė</div>
-                <div>{detailVisit.diagnosis || "—"}</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-slate-500">Priežastis</div>
+                  <div>{detailVisit.reason || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Diagnozė</div>
+                  <div>{detailVisit.diagnosis || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Paslaugos</div>
+                  <div>{detailVisit.services || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Paslaugos kaina</div>
+                  <div>{formatMoney(detailVisit.service_price)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Veterinarijos gydytojas</div>
+                  <div>{detailVisit.vet_name || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Pastabos</div>
+                  <div>{detailVisit.notes || "—"}</div>
+                </div>
+                <div className="col-span-2">
+                  <Button size="sm" variant="secondary" onClick={() => setEditingDetails(true)}>
+                    <Pencil size={14} /> Redaguoti vizitą
+                  </Button>
+                </div>
               </div>
-              <div>
-                <div className="text-xs text-slate-500">Paslaugos</div>
-                <div>{detailVisit.services || "—"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500">Paslaugos kaina</div>
-                <div>{formatMoney(detailVisit.service_price)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500">Veterinarijos gydytojas</div>
-                <div>{detailVisit.vet_name || "—"}</div>
-              </div>
-              <div>
-                <div className="text-xs text-slate-500">Pastabos</div>
-                <div>{detailVisit.notes || "—"}</div>
-              </div>
-            </div>
+            )}
 
             <div>
               <div className="mb-2 text-sm font-medium text-slate-700">Panaudoti produktai</div>
@@ -653,9 +655,6 @@ function VisitsPageInner() {
                       <span>
                         {u.product_name} — {formatQty(u.quantity, u.unit)}
                         {u.batch_lot ? ` (partija ${u.batch_lot})` : ""}
-                        {u.administration_route
-                          ? ` · ${ADMINISTRATION_ROUTES.find((r) => r.code === u.administration_route)?.label ?? u.administration_route}`
-                          : ""}
                       </span>
                       <button
                         onClick={() => handleDeleteUsage(detailVisit.visit_id, i)}
@@ -668,21 +667,14 @@ function VisitsPageInner() {
                 </div>
               )}
 
-              <div className="mt-3 rounded-lg border border-dashed border-slate-300 p-2">
-              <div className="grid grid-cols-12 items-end gap-2">
+              <div className="mt-3 grid grid-cols-12 items-end gap-2 rounded-lg border border-dashed border-slate-300 p-2">
                 <select
                   value={addLine.product_id}
                   onChange={async (e) => {
                     const productId = e.target.value;
                     const product = products.find((p) => p.id === productId);
                     const suggested = productId ? await suggestBatch(productId) : "";
-                    setAddLine({
-                      product_id: productId,
-                      batch_id: suggested,
-                      qty: "",
-                      unit: product?.unit ?? "",
-                      administration_route: "",
-                    });
+                    setAddLine({ product_id: productId, batch_id: suggested, qty: "", unit: product?.unit ?? "" });
                   }}
                   className="col-span-4 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                 >
@@ -724,47 +716,7 @@ function VisitsPageInner() {
                   <Plus size={14} />
                 </Button>
               </div>
-
-              {(() => {
-                const addLineProduct = products.find((p) => p.id === addLine.product_id);
-                const showRoutes = requiresWithdrawal(addLineProduct?.category);
-                if (!showRoutes) return null;
-                const meatDays = getRouteWithdrawalDays(addLineProduct, addLine.administration_route, "meat");
-                const milkDays = getRouteWithdrawalDays(addLineProduct, addLine.administration_route, "milk");
-                return (
-                  <div className="mt-2 pl-1">
-                    <label className="mb-1 block text-[11px] font-medium text-slate-600">Suleidimo būdas</label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {ADMINISTRATION_ROUTES.map((route) => (
-                        <button
-                          key={route.code}
-                          type="button"
-                          onClick={() => setAddLine({ ...addLine, administration_route: route.code })}
-                          className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors ${
-                            addLine.administration_route === route.code
-                              ? "border-emerald-600 bg-emerald-600 text-white"
-                              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                          }`}
-                        >
-                          {route.label}
-                        </button>
-                      ))}
-                    </div>
-                    {(meatDays || milkDays) && (
-                      <div className="mt-1.5 flex items-center gap-3 rounded border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs text-amber-800">
-                        <span className="flex items-center gap-1 font-semibold text-amber-900">
-                          <AlertTriangle size={12} /> Karencija:
-                        </span>
-                        {meatDays ? <span>🥩 {meatDays} d.</span> : null}
-                        {milkDays ? <span>🥛 {milkDays} d.</span> : null}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
               {addLineError && <p className="mt-1 text-xs text-red-600">{addLineError}</p>}
-              </div>
             </div>
 
             <div className="flex justify-end pt-2">

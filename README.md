@@ -44,6 +44,7 @@ supabase/migrations/20260916000003_admin_access.sql          -- admin paskyra, m
 supabase/migrations/20260917000001_clients_and_packaging.sql -- klientai, partijų pakuočių laukai
 supabase/migrations/20260917000002_supplier_bank_fields.sql  -- tiekėjo IBAN/adresas (iš PDF importo)
 supabase/migrations/20260918000001_administration_routes.sql -- karencija pagal suleidimo būdą (i.v, i.m...)
+supabase/migrations/20260918000002_client_entity_fields_and_branding.sql -- juridinis asmuo laukai, vet logotipas
 ```
 
 Naujus migracijų failus ateityje pridėsime tuo pačiu principu — vienas

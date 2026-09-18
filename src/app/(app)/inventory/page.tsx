@@ -96,6 +96,7 @@ export default function InventoryPage() {
               <EmptyState message="Atsargų nerasta." />
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
                 <tr>
@@ -132,12 +133,14 @@ export default function InventoryPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )
         ) : filteredBatches.length === 0 ? (
           <div className="p-5">
             <EmptyState message="Partijų nerasta." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -170,6 +173,7 @@ export default function InventoryPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </div>

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Pencil, Plus, Stethoscope, Trash2 } from "lucide-react";
+import { PawPrint, Pencil, Plus, Stethoscope, Trash2, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -21,7 +21,7 @@ type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 const EMPTY_FORM = {
   tag_no: "",
   name: "",
-  species: "bovine",
+  species: "equine",
   sex: "",
   breed: "",
   birth_date: "",
@@ -216,6 +216,7 @@ function AnimalsPageInner() {
             <EmptyState message="Gyvūnų nerasta." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -276,10 +277,18 @@ function AnimalsPageInner() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "Redaguoti gyvūną" : "Naujas gyvūnas"} wide>
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? "Redaguoti gyvūną" : "Naujas gyvūnas"}
+        icon={<PawPrint size={18} />}
+        iconClassName="bg-teal-50 text-teal-600"
+        wide
+      >
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Input
@@ -294,18 +303,7 @@ function AnimalsPageInner() {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <Select
-              label="Rūšis"
-              value={form.species}
-              onChange={(e) => setForm({ ...form, species: e.target.value })}
-            >
-              {SPECIES_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
             <Input label="Lytis" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })} />
             <Input
               label="Veislė"
@@ -365,7 +363,13 @@ function AnimalsPageInner() {
         </form>
       </Modal>
 
-      <Modal open={quickClientOpen} onClose={() => setQuickClientOpen(false)} title="Naujas klientas">
+      <Modal
+        open={quickClientOpen}
+        onClose={() => setQuickClientOpen(false)}
+        title="Naujas klientas"
+        icon={<Users size={18} />}
+        iconClassName="bg-indigo-50 text-indigo-600"
+      >
         <form onSubmit={handleQuickClientSubmit} className="space-y-3">
           <Input
             label="Pavadinimas"

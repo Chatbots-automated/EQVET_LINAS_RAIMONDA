@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, ProductCategory } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -10,12 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { CATEGORY_LABELS, UNIT_LABELS } from "@/lib/labels";
-import {
-  EMPTY_PRODUCT_FORM,
-  ProductFormFields,
-  productFormToPayload,
-  productToWithdrawalRouteFields,
-} from "@/components/ProductFormFields";
+import { EMPTY_PRODUCT_FORM, ProductFormFields, productFormToPayload } from "@/components/ProductFormFields";
 
 type Product = Database["public"]["Tables"]["products"]["Row"];
 
@@ -69,11 +64,8 @@ export default function ProductsPage() {
       package_size: p.package_size?.toString() ?? "",
       active_substance: p.active_substance ?? "",
       registration_code: p.registration_code ?? "",
-      withdrawal_days_meat: p.withdrawal_days_meat?.toString() ?? "",
-      withdrawal_days_milk: p.withdrawal_days_milk?.toString() ?? "",
       notes: p.notes ?? "",
       is_active: p.is_active,
-      ...productToWithdrawalRouteFields(p),
     });
     setError(null);
     setModalOpen(true);
@@ -140,6 +132,7 @@ export default function ProductsPage() {
             <EmptyState message="Produktų nerasta." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -189,10 +182,18 @@ export default function ProductsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? "Redaguoti produktą" : "Naujas produktas"} wide>
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? "Redaguoti produktą" : "Naujas produktas"}
+        icon={<Package size={18} />}
+        iconClassName="bg-amber-50 text-amber-600"
+        wide
+      >
         <form onSubmit={handleSubmit} className="space-y-3">
           <ProductFormFields form={form} onChange={setForm} />
 

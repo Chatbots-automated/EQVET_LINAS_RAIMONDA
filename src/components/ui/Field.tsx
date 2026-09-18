@@ -1,7 +1,5 @@
 import { type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
-
-const baseClasses =
-  "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-400";
+import { useTheme } from "@/lib/theme";
 
 function Wrapper({
   label,
@@ -29,9 +27,14 @@ export function Input({
   wrapperClassName,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { label: string; wrapperClassName?: string }) {
+  const theme = useTheme();
   return (
     <Wrapper label={label} required={required} className={wrapperClassName}>
-      <input required={required} className={baseClasses} {...props} />
+      <input
+        required={required}
+        className={`mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:bg-white focus:ring-2 disabled:bg-slate-100 disabled:text-slate-400 ${theme.fieldFocus}`}
+        {...props}
+      />
     </Wrapper>
   );
 }
@@ -43,9 +46,14 @@ export function Select({
   children,
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; wrapperClassName?: string }) {
+  const theme = useTheme();
   return (
     <Wrapper label={label} required={required} className={wrapperClassName}>
-      <select required={required} className={baseClasses} {...props}>
+      <select
+        required={required}
+        className={`mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:bg-white focus:ring-2 disabled:bg-slate-100 disabled:text-slate-400 ${theme.fieldFocus}`}
+        {...props}
+      >
         {children}
       </select>
     </Wrapper>
@@ -58,9 +66,14 @@ export function Textarea({
   wrapperClassName,
   ...props
 }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; wrapperClassName?: string }) {
+  const theme = useTheme();
   return (
     <Wrapper label={label} required={required} className={wrapperClassName}>
-      <textarea required={required} className={`${baseClasses} min-h-20`} {...props} />
+      <textarea
+        required={required}
+        className={`mt-1 min-h-20 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:bg-white focus:ring-2 disabled:bg-slate-100 disabled:text-slate-400 ${theme.fieldFocus}`}
+        {...props}
+      />
     </Wrapper>
   );
 }

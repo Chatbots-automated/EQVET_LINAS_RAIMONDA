@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileText, FileUp, Loader2, Package, Plus, Save } from "lucide-react";
+import { Building2, CheckCircle2, FileText, FileUp, Loader2, Package, Plus, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -868,6 +868,7 @@ export default function ReceivingPage() {
             <EmptyState message="Dar nėra pajamuotų prekių." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -894,10 +895,18 @@ export default function ReceivingPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
 
-      <Modal open={quickProductOpen} onClose={() => setQuickProductOpen(false)} title="Naujas produktas" wide>
+      <Modal
+        open={quickProductOpen}
+        onClose={() => setQuickProductOpen(false)}
+        title="Naujas produktas"
+        icon={<Package size={18} />}
+        iconClassName="bg-amber-50 text-amber-600"
+        wide
+      >
         <form onSubmit={handleQuickProductSubmit} className="space-y-3">
           <ProductFormFields form={quickProductForm} onChange={setQuickProductForm} showActiveToggle={false} />
 
@@ -953,7 +962,13 @@ export default function ReceivingPage() {
         </form>
       </Modal>
 
-      <Modal open={quickSupplierOpen} onClose={() => setQuickSupplierOpen(false)} title="Naujas tiekėjas">
+      <Modal
+        open={quickSupplierOpen}
+        onClose={() => setQuickSupplierOpen(false)}
+        title="Naujas tiekėjas"
+        icon={<Building2 size={18} />}
+        iconClassName="bg-sky-50 text-sky-600"
+      >
         <form onSubmit={handleQuickSupplierSubmit} className="space-y-3">
           <Input
             label="Pavadinimas"

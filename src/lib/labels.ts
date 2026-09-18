@@ -38,10 +38,4 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
   expired: "Pasibaigusi",
 };
 
-export const SPECIES_OPTIONS = [
-  { value: "bovine", label: "Galvijas" },
-  { value: "equine", label: "Arklys" },
-  { value: "porcine", label: "Kiaulė" },
-  { value: "ovine", label: "Avis / Ožka" },
-  { value: "other", label: "Kita" },
-];
+export const SPECIES_OPTIONS = [{ value: "equine", label: "Arklys" }];

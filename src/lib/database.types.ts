@@ -21,6 +21,8 @@ export interface Database {
           email: string;
           full_name: string;
           is_admin: boolean;
+          logo_url: string | null;
+          theme: string;
           created_at: string;
           updated_at: string;
         };
@@ -36,6 +38,9 @@ export interface Database {
           address: string | null;
           phone: string | null;
           email: string | null;
+          is_company: boolean;
+          company_code: string | null;
+          vat_code: string | null;
           notes: string | null;
           created_at: string;
           updated_at: string;

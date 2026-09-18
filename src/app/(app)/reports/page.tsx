@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
 import { exportToCsv, exportToPdf } from "@/lib/export";
@@ -165,12 +164,18 @@ export default function ReportsPage() {
             onChange={(e) => setTo(e.target.value)}
             className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
           />
-          <Button variant="secondary" size="sm" onClick={handleExportCsv}>
+          <button
+            onClick={handleExportCsv}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
+          >
             <Download size={14} /> CSV
-          </Button>
-          <Button variant="secondary" size="sm" onClick={handleExportPdf}>
+          </button>
+          <button
+            onClick={handleExportPdf}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-700"
+          >
             <FileText size={14} /> PDF
-          </Button>
+          </button>
         </div>
       </div>
 
@@ -183,6 +188,7 @@ export default function ReportsPage() {
               <EmptyState message="Nėra vizitų pasirinktu laikotarpiu." />
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
                 <tr>
@@ -207,12 +213,14 @@ export default function ReportsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )
         ) : movements.length === 0 ? (
           <div className="p-5">
             <EmptyState message="Nėra atsargų judėjimo pasirinktu laikotarpiu." />
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
@@ -247,6 +255,7 @@ export default function ReportsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </div>
