@@ -477,7 +477,7 @@ export default function ReceivingPage() {
 
   return (
     <div>
-      <PageHeader title="Pajamavimas" description="Veterinarinių produktų priėmimas į atsargas" />
+      <PageHeader title="Pajamavimas" />
 
       <div className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-1 text-sm">
         <button
@@ -516,20 +516,13 @@ export default function ReceivingPage() {
 
           <Card className={showSplitLayout ? "flex-1 overflow-y-auto lg:max-h-[calc(100vh-14rem)]" : ""}>
             {!WEBHOOK_URL ? (
-              <p className="text-sm text-slate-500">
-                Sąskaitų nuskaitymo webhook&apos;as dar nesukonfigūruotas. Nustatykite
-                <code className="mx-1 rounded bg-slate-100 px-1.5 py-0.5">NEXT_PUBLIC_INVOICE_WEBHOOK_URL</code>
-                aplinkos kintamąjį arba naudokite rankinį įvedimą.
-              </p>
+              <p className="text-sm text-slate-500">Sąskaitų nuskaitymas šiuo metu neprieinamas.</p>
             ) : !webhookData ? (
               <div className="flex flex-col items-center gap-4 py-8 text-center">
                 <div className="rounded-full bg-emerald-50 p-3">
                   <FileUp className="text-emerald-600" size={28} />
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-slate-700">Įkelkite sąskaitos PDF failą</p>
-                  <p className="mt-0.5 text-xs text-slate-500">Sistema automatiškai atpažins prekes ir kiekius</p>
-                </div>
+                <p className="text-sm font-medium text-slate-700">Įkelkite sąskaitos PDF failą</p>
 
                 <label
                   htmlFor="invoice-pdf-input"
@@ -772,8 +765,7 @@ export default function ReceivingPage() {
 
             {selectedManualProduct?.package_size ? (
               <p className="text-xs text-slate-500">
-                Pakuotės dydis: {formatQty(selectedManualProduct.package_size, selectedManualProduct.unit)} — nurodykite
-                kiek pakuočių gauta, o kiekis bus apskaičiuotas automatiškai.
+                Pakuotės dydis: {formatQty(selectedManualProduct.package_size, selectedManualProduct.unit)}
               </p>
             ) : null}
 
@@ -924,7 +916,6 @@ export default function ReceivingPage() {
                     className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     placeholder="5"
                   />
-                  <p className="mt-0.5 text-xs text-slate-500">kiek pakuočių gauta</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
@@ -941,11 +932,11 @@ export default function ReceivingPage() {
                     className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold"
                     placeholder="500"
                   />
-                  <p className="mt-0.5 text-xs font-medium text-emerald-700">
-                    {quickProductForm.package_size && quickReceivingPackageCount
-                      ? `${quickReceivingPackageCount} pak × ${quickProductForm.package_size}${quickProductForm.unit}`
-                      : "arba įveskite rankiniu būdu"}
-                  </p>
+                  {quickProductForm.package_size && quickReceivingPackageCount && (
+                    <p className="mt-0.5 text-xs font-medium text-emerald-700">
+                      {`${quickReceivingPackageCount} pak × ${quickProductForm.package_size}${quickProductForm.unit}`}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

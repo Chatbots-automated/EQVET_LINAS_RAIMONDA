@@ -17,6 +17,7 @@ type Product = Database["public"]["Tables"]["products"]["Row"];
 const CATEGORY_COLORS: Record<ProductCategory, string> = {
   medicines: "bg-blue-50 text-blue-700",
   vaccines: "bg-purple-50 text-purple-700",
+  biocides: "bg-fuchsia-50 text-fuchsia-700",
   materials: "bg-slate-100 text-slate-700",
   hygiene: "bg-cyan-50 text-cyan-700",
   other: "bg-slate-100 text-slate-700",
@@ -107,7 +108,6 @@ export default function ProductsPage() {
     <div>
       <PageHeader
         title="Produktai"
-        description="Veterinarinių produktų katalogas"
         actions={
           <Button onClick={openCreate}>
             <Plus size={16} /> Naujas produktas

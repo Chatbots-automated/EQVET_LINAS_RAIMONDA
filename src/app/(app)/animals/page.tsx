@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
-import { SPECIES_OPTIONS } from "@/lib/labels";
+import { SPECIES_OPTIONS, speciesLabel } from "@/lib/labels";
 import { formatDate } from "@/lib/format";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
@@ -174,8 +174,6 @@ function AnimalsPageInner() {
       (clientName(a.client_id) ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
-  const speciesLabel = (value: string) =>
-    SPECIES_OPTIONS.find((s) => s.value === value)?.label ?? value;
 
   const filterClient = clients.find((c) => c.id === clientFilter);
 
@@ -184,7 +182,7 @@ function AnimalsPageInner() {
       <PageHeader
         title="Gyvūnai"
         description={
-          filterClient ? `Kliento „${filterClient.name}" gyvūnai` : "Gyvūnų registras ir pagrindiniai duomenys"
+          filterClient ? `Kliento „${filterClient.name}" gyvūnai` : undefined
         }
         actions={
           <Button onClick={openCreate}>
@@ -303,7 +301,19 @@ function AnimalsPageInner() {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            <Select
+              label="Rūšis"
+              required
+              value={form.species}
+              onChange={(e) => setForm({ ...form, species: e.target.value })}
+            >
+              {SPECIES_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
             <Input label="Lytis" value={form.sex} onChange={(e) => setForm({ ...form, sex: e.target.value })} />
             <Input
               label="Veislė"

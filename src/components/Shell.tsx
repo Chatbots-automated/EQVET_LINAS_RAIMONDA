@@ -12,6 +12,7 @@ import {
   Stethoscope,
   FileBarChart,
   Users,
+  Droplet,
   LogOut,
   Menu,
   X,
@@ -29,6 +30,7 @@ const NAV_SECTIONS = [
       { href: "/clients", label: "Klientai", icon: Users },
       { href: "/animals", label: "Gyvūnai", icon: PawPrint },
       { href: "/visits", label: "Vizitai", icon: Stethoscope },
+      { href: "/biocides", label: "Biocidai", icon: Droplet },
     ],
   },
   {

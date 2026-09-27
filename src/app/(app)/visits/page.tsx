@@ -34,7 +34,12 @@ const EMPTY_VISIT_FORM = {
   service_price: "",
   vet_name: "",
   notes: "",
+  first_symptoms_date: "",
+  tests: "",
+  outcome: "",
 };
+
+const OUTCOME_OPTIONS = ["Pasveiko", "Tęsiamas gydymas", "Nugaišo", "Paskerstas", "Eutanazija"];
 
 function emptyLine(): UsageLine {
   return { product_id: "", batch_id: "", qty: "", unit: "" };
@@ -170,6 +175,9 @@ function VisitsPageInner() {
         service_price: form.service_price ? Number(form.service_price) : null,
         vet_name: form.vet_name.trim() || null,
         notes: form.notes.trim() || null,
+        first_symptoms_date: form.first_symptoms_date || null,
+        tests: form.tests.trim() || null,
+        outcome: form.outcome.trim() || null,
       })
       .select()
       .single();
@@ -286,6 +294,9 @@ function VisitsPageInner() {
       service_price: v.service_price?.toString() ?? "",
       vet_name: v.vet_name ?? "",
       notes: v.notes ?? "",
+      first_symptoms_date: v.first_symptoms_date ?? "",
+      tests: v.tests ?? "",
+      outcome: v.outcome ?? "",
     });
   }
 
@@ -304,6 +315,9 @@ function VisitsPageInner() {
         service_price: detailForm.service_price ? Number(detailForm.service_price) : null,
         vet_name: detailForm.vet_name.trim() || null,
         notes: detailForm.notes.trim() || null,
+        first_symptoms_date: detailForm.first_symptoms_date || null,
+        tests: detailForm.tests.trim() || null,
+        outcome: detailForm.outcome.trim() || null,
       })
       .eq("id", detailVisit.visit_id);
 
@@ -335,7 +349,7 @@ function VisitsPageInner() {
         description={
           filterAnimal
             ? `Gyvūno ${filterAnimal.tag_no} vizitų istorija`
-            : "Registruoti gydymai ir produktų nurašymas"
+            : undefined
         }
         actions={
           <Button onClick={openCreate}>
@@ -438,6 +452,8 @@ function VisitsPageInner() {
               onChange={(e) => setForm({ ...form, diagnosis: e.target.value })}
             />
           </div>
+
+          <VisitRegistryFields value={form} onChange={(patch) => setForm({ ...form, ...patch })} />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Input
@@ -577,6 +593,10 @@ function VisitsPageInner() {
                     onChange={(e) => setDetailForm({ ...detailForm, diagnosis: e.target.value })}
                   />
                 </div>
+                <VisitRegistryFields
+                  value={detailForm}
+                  onChange={(patch) => setDetailForm({ ...detailForm, ...patch })}
+                />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Input
                     label="Suteiktos paslaugos"
@@ -619,6 +639,18 @@ function VisitsPageInner() {
                 <div>
                   <div className="text-xs text-slate-500">Diagnozė</div>
                   <div>{detailVisit.diagnosis || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Pirmųjų požymių data</div>
+                  <div>{formatDate(detailVisit.first_symptoms_date)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Atlikti tyrimai</div>
+                  <div>{detailVisit.tests || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Ligos baigtis</div>
+                  <div>{detailVisit.outcome || "—"}</div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Paslaugos</div>
@@ -727,6 +759,39 @@ function VisitsPageInner() {
           </div>
         )}
       </Modal>
+    </div>
+  );
+}
+
+// Extra columns of the "Gydomų gyvūnų registracijos žurnalas" (Ataskaitos),
+// shared by the create form and the detail edit form.
+function VisitRegistryFields({
+  value,
+  onChange,
+}: {
+  value: { first_symptoms_date: string; tests: string; outcome: string };
+  onChange: (patch: Partial<typeof EMPTY_VISIT_FORM>) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      <Input
+        label="Pirmųjų požymių data"
+        type="date"
+        value={value.first_symptoms_date}
+        onChange={(e) => onChange({ first_symptoms_date: e.target.value })}
+      />
+      <Input label="Atlikti tyrimai" value={value.tests} onChange={(e) => onChange({ tests: e.target.value })} />
+      <Input
+        label="Ligos baigtis"
+        list="visit-outcome-options"
+        value={value.outcome}
+        onChange={(e) => onChange({ outcome: e.target.value })}
+      />
+      <datalist id="visit-outcome-options">
+        {OUTCOME_OPTIONS.map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
     </div>
   );
 }

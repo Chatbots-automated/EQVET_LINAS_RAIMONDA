@@ -7,7 +7,7 @@
 // back to `never` (breaking .insert()/.update() typing) if it's missing.
 
 export type Unit = "ml" | "l" | "g" | "kg" | "vnt" | "tabletkė" | "dozė";
-export type ProductCategory = "medicines" | "vaccines" | "materials" | "hygiene" | "other";
+export type ProductCategory = "medicines" | "vaccines" | "biocides" | "materials" | "hygiene" | "other";
 export type BatchStatus = "active" | "depleted" | "expired";
 export type StockStatus = "expired" | "depleted" | "low" | "available";
 export type MovementType = "pajamavimas" | "nurašymas";
@@ -42,6 +42,10 @@ export interface Database {
           company_code: string | null;
           vat_code: string | null;
           notes: string | null;
+          country_code: string | null;
+          external_source: string | null;
+          external_id: string | null;
+          synced_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -205,6 +209,9 @@ export interface Database {
           notes: string | null;
           withdrawal_until_meat: string | null;
           withdrawal_until_milk: string | null;
+          first_symptoms_date: string | null;
+          tests: string | null;
+          outcome: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -216,7 +223,8 @@ export interface Database {
         Row: {
           id: string;
           user_id: string;
-          visit_id: string;
+          visit_id: string | null;
+          biocide_usage_id: string | null;
           product_id: string;
           batch_id: string;
           qty: number;
@@ -232,6 +240,31 @@ export interface Database {
           unit: Unit;
         };
         Update: Partial<Database["public"]["Tables"]["usage_items"]["Row"]>;
+        Relationships: [];
+      };
+      biocide_usage: {
+        Row: {
+          id: string;
+          user_id: string;
+          product_id: string;
+          batch_id: string;
+          use_date: string;
+          qty: number;
+          unit: Unit;
+          purpose: string | null;
+          work_scope: string | null;
+          used_by_name: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["biocide_usage"]["Row"]> & {
+          product_id: string;
+          batch_id: string;
+          qty: number;
+          unit: Unit;
+        };
+        Update: Partial<Database["public"]["Tables"]["biocide_usage"]["Row"]>;
         Relationships: [];
       };
     };
@@ -321,6 +354,107 @@ export interface Database {
             batch_lot: string | null;
             administration_route: string | null;
           }[];
+          first_symptoms_date: string | null;
+          tests: string | null;
+          outcome: string | null;
+        };
+        Relationships: [];
+      };
+      vw_treated_animals_registry: {
+        Row: {
+          visit_id: string;
+          user_id: string;
+          registration_date: string;
+          created_at: string;
+          animal_id: string;
+          animal_tag: string;
+          animal_name: string | null;
+          species: string;
+          sex: string | null;
+          birth_date: string | null;
+          client_id: string | null;
+          owner_name: string | null;
+          owner_address: string | null;
+          first_symptoms_date: string | null;
+          animal_condition: string | null;
+          tests: string | null;
+          clinical_diagnosis: string | null;
+          services: string | null;
+          medicines: string | null;
+          outcome: string | null;
+          veterinarian: string | null;
+          notes: string | null;
+        };
+        Relationships: [];
+      };
+      vw_vet_drug_journal: {
+        Row: {
+          batch_id: string;
+          user_id: string;
+          product_id: string;
+          product_name: string;
+          category: ProductCategory;
+          registration_code: string | null;
+          active_substance: string | null;
+          unit: Unit;
+          receipt_date: string;
+          supplier_name: string | null;
+          doc_title: string | null;
+          doc_number: string | null;
+          doc_date: string | null;
+          batch_number: string | null;
+          mfg_date: string | null;
+          expiry_date: string | null;
+          quantity_received: number;
+          quantity_used: number;
+          quantity_remaining: number;
+          created_at: string;
+        };
+        Relationships: [];
+      };
+      vw_biocide_receiving_journal: {
+        Row: {
+          batch_id: string;
+          user_id: string;
+          product_id: string;
+          biocide_name: string;
+          registration_code: string | null;
+          active_substance: string | null;
+          unit: Unit;
+          receipt_date: string;
+          supplier_name: string | null;
+          doc_title: string | null;
+          doc_number: string | null;
+          doc_date: string | null;
+          quantity_received: number;
+          mfg_date: string | null;
+          expiry_date: string | null;
+          batch_number: string | null;
+          created_at: string;
+        };
+        Relationships: [];
+      };
+      vw_biocide_journal: {
+        Row: {
+          entry_id: string;
+          user_id: string;
+          product_id: string;
+          biocide_name: string;
+          registration_code: string | null;
+          active_substance: string | null;
+          biocide_usage_id: string | null;
+          visit_id: string | null;
+          use_date: string;
+          purpose: string | null;
+          work_scope: string | null;
+          quantity_used: number;
+          unit: Unit;
+          batch_number: string | null;
+          batch_expiry: string | null;
+          applied_by: string | null;
+          notes: string | null;
+          quantity_remaining: number;
+          created_at: string;
         };
         Relationships: [];
       };

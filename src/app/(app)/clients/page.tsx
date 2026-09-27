@@ -13,6 +13,13 @@ import { Input, Textarea } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
 
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
+type SourceFilter = "all" | "invoice123" | "manual";
+
+const SOURCE_FILTERS: { value: SourceFilter; label: string }[] = [
+  { value: "all", label: "Visi" },
+  { value: "invoice123", label: "Iš Invoice123" },
+  { value: "manual", label: "Sukurti rankiniu būdu" },
+];
 
 const EMPTY_FORM = {
   name: "",
@@ -36,6 +43,7 @@ export default function ClientsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   async function load() {
     setLoading(true);
@@ -120,13 +128,18 @@ export default function ClientsPage() {
     load();
   }
 
-  const filtered = clients.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()));
+  const q = search.trim().toLowerCase();
+  const filtered = clients.filter((c) => {
+    if (sourceFilter === "invoice123" && c.external_source !== "invoice123") return false;
+    if (sourceFilter === "manual" && c.external_source) return false;
+    if (!q) return true;
+    return [c.name, c.company_code, c.vat_code, c.address].some((v) => v?.toLowerCase().includes(q));
+  });
 
   return (
     <div>
       <PageHeader
         title="Klientai"
-        description="Gyvūnų savininkai / ūkiai"
         actions={
           <Button onClick={openCreate}>
             <Plus size={16} /> Naujas klientas
@@ -134,13 +147,28 @@ export default function ClientsPage() {
         }
       />
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
-          placeholder="Ieškoti pagal pavadinimą..."
+          placeholder="Ieškoti pagal pavadinimą, kodą, adresą..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
         />
+        <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+          {SOURCE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setSourceFilter(f.value)}
+              className={`rounded-md px-3 py-1 text-sm ${
+                sourceFilter === f.value
+                  ? "bg-emerald-50 font-medium text-emerald-700"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <Card className="overflow-hidden p-0">
@@ -156,6 +184,7 @@ export default function ClientsPage() {
             <thead className="border-b border-slate-100 bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-3">Pavadinimas</th>
+                <th className="px-5 py-3">Įmonės / PVM kodas</th>
                 <th className="px-5 py-3">Adresas</th>
                 <th className="px-5 py-3">Telefonas</th>
                 <th className="px-5 py-3">El. paštas</th>
@@ -171,8 +200,26 @@ export default function ClientsPage() {
                     {c.is_company && (
                       <Badge className="ml-2 bg-indigo-50 text-indigo-700">Juridinis</Badge>
                     )}
+                    {c.external_source === "invoice123" && (
+                      <Badge className="ml-2 bg-amber-50 text-amber-700">Invoice123</Badge>
+                    )}
                   </td>
-                  <td className="px-5 py-3 text-slate-600">{c.address ?? "—"}</td>
+                  <td className="px-5 py-3 text-slate-600">
+                    {c.company_code || c.vat_code ? (
+                      <>
+                        <div>{c.company_code ?? "—"}</div>
+                        {c.vat_code && <div className="text-xs text-slate-500">{c.vat_code}</div>}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-slate-600">
+                    {c.address ?? "—"}
+                    {c.country_code && c.country_code !== "LT" && (
+                      <span className="ml-1 text-xs text-slate-500">({c.country_code})</span>
+                    )}
+                  </td>
                   <td className="px-5 py-3 text-slate-600">{c.phone ?? "—"}</td>
                   <td className="px-5 py-3 text-slate-600">{c.email ?? "—"}</td>
                   <td className="px-5 py-3 text-slate-600">{animalCounts[c.id] ?? 0}</td>

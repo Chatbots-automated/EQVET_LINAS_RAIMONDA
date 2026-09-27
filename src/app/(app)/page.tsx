@@ -129,7 +129,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <PageHeader title="Pagrindinis" description="EQ VET veiklos suvestinė" />
+      <PageHeader title="Pagrindinis" />
 
       {/* Primary stats */}
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -3,6 +3,7 @@ import type { BatchStatus, ProductCategory, StockStatus, Unit } from "@/lib/data
 export const CATEGORY_LABELS: Record<ProductCategory, string> = {
   medicines: "Vaistai",
   vaccines: "Vakcinos",
+  biocides: "Biocidai",
   materials: "Priemonės",
   hygiene: "Higiena",
   other: "Kita",
@@ -38,4 +39,14 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
   expired: "Pasibaigusi",
 };
 
-export const SPECIES_OPTIONS = [{ value: "equine", label: "Arklys" }];
+export const SPECIES_OPTIONS = [
+  { value: "dog", label: "Šuo" },
+  { value: "cat", label: "Katė" },
+  { value: "equine", label: "Arklys" },
+  { value: "bovine", label: "Galvijas" },
+];
+
+export function speciesLabel(value: string | null | undefined) {
+  if (!value) return "—";
+  return SPECIES_OPTIONS.find((s) => s.value === value)?.label ?? value;
+}

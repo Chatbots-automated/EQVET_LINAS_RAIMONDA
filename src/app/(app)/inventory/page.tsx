@@ -51,7 +51,7 @@ export default function InventoryPage() {
 
   return (
     <div>
-      <PageHeader title="Atsargos" description="Produktų likučiai partijomis (FIFO)" />
+      <PageHeader title="Atsargos" />
 
       {lowOrExpiredCount > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">

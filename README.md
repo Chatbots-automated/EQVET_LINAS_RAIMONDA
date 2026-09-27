@@ -45,6 +45,10 @@ supabase/migrations/20260917000001_clients_and_packaging.sql -- klientai, partij
 supabase/migrations/20260917000002_supplier_bank_fields.sql  -- tiekėjo IBAN/adresas (iš PDF importo)
 supabase/migrations/20260918000001_administration_routes.sql -- karencija pagal suleidimo būdą (i.v, i.m...)
 supabase/migrations/20260918000002_client_entity_fields_and_branding.sql -- juridinis asmuo laukai, vet logotipas
+supabase/migrations/20260918000003_profile_theme.sql         -- paskyros spalvų tema
+supabase/migrations/20260925000001_biocide_category.sql      -- kategorija „Biocidai“ (BŪTINAI atskirai!)
+supabase/migrations/20260925000002_biocide_usage_and_journals.sql -- biocidų naudojimas + žurnalų views
+supabase/migrations/20260927000001_invoice123_clients.sql      -- Invoice123 klientų sinchronizacija (n8n)
 ```
 
 Naujus migracijų failus ateityje pridėsime tuo pačiu principu — vienas
@@ -118,6 +122,28 @@ Realus webhook atsakymo formatas (n8n grąžina `payload` objektą tiesiogiai):
 Kol `NEXT_PUBLIC_INVOICE_WEBHOOK_URL` nenustatytas, PDF importo skirtukas
 rodo pranešimą ir programa automatiškai naudoja rankinį režimą.
 
+## Invoice123 klientų sinchronizacija (n8n)
+
+n8n workflow'as paima klientus iš Invoice123 ir kviečia Supabase RPC
+`sync_invoice123_clients` su **service_role** raktu:
+
+```
+POST https://<projekto-ref>.supabase.co/rest/v1/rpc/sync_invoice123_clients
+apikey: <SERVICE_ROLE_KEY>
+Authorization: Bearer <SERVICE_ROLE_KEY>
+Content-Type: application/json
+
+{ "p_owner_email": "eqvetlinas@gmail.com", "p_clients": [ ...Invoice123 data.result... ] }
+```
+
+- `p_owner_email` nurodo, kurio gydytojo paskyrai priklauso klientai
+  (Linas — `eqvetlinas@gmail.com`). Klientai įrašomi su to vartotojo `user_id`,
+  todėl kitas gydytojas jų nemato.
+- Sutapatinama pagal `(user_id, external_source='invoice123', external_id)` —
+  kartotinis paleidimas atnaujina, o ne dubliuoja. Telefonas, el. paštas ir
+  pastabos (įvesti programoje) neperrašomi.
+- Funkcija neprieinama prisijungusiems vartotojams — tik service_role.
+
 ## Duomenų bazės architektūra
 
 - **FIFO atsargų valdymas:** kiekviena partija (`batches`) turi `qty_left`,
@@ -141,6 +167,7 @@ Grupuota į dvi sekcijas navigacijoje:
 | Klientai | Gyvūnų savininkai/ūkiai — kiekvienas gyvūnas priklauso klientui (`animals.client_id`) |
 | Gyvūnai | Gyvūnų registras, pagrindiniai duomenys, nuoroda į vizitų istoriją |
 | Vizitai | Gydymo/apsilankymo registravimas su automatiniu produktų nurašymu |
+| Biocidai | Biocidų (kategorija „Biocidai“) panaudojimas — nurašoma per tą patį FIFO `usage_items` mechanizmą |
 
 **Apskaita**
 
@@ -149,7 +176,7 @@ Grupuota į dvi sekcijas navigacijoje:
 | Pajamavimas | Prekių priėmimas — rankiniu būdu (su pakuočių skaičiavimu) arba iš sąskaitos PDF |
 | Atsargos | Likučiai pagal produktą arba pagal partiją (FIFO), galiojimo/mažo likučio įspėjimai |
 | Produktai | Produktų katalogas (kategorija, vienetas, pakuotės dydis, išlaukos ir kt.) |
-| Ataskaitos | Gydymų žurnalas ir atsargų judėjimo žurnalas, CSV/PDF eksportas |
+| Ataskaitos | Gydomų gyvūnų registras, vaistų žurnalas, biocidų žurnalas, vizitų suvestinė, atsargų judėjimas — CSV/PDF eksportas |
 
 Tiekėjai (`suppliers`) nebeturi atskiro puslapio — kuriami/pasirenkami
 tiesiogiai Pajamavimo ekrane (rankiniu būdu arba automatiškai iš PDF importo).
