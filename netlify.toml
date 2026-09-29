@@ -1,5 +1,7 @@
 [build]
-  command = "npm run build"
+  # Wipe any Turbopack cache restored from earlier builds (it may contain env
+  # values — see next.config.ts), then build without writing a new one.
+  command = "rm -rf .next/cache/turbopack .netlify/.next/cache/turbopack && npm run build"
 
 [build.environment]
   NODE_VERSION = "22"
