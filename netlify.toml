@@ -3,6 +3,12 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # NEXT_PUBLIC_* values are compiled into the browser bundle ON PURPOSE
+  # (Supabase URL + anon key are public; access is enforced by RLS). Tell
+  # Netlify's secrets scanner they are expected there. Real secrets
+  # (SUPABASE_SERVICE_ROLE_KEY, INVOICE123_TOKEN_ENCRYPTION_KEY) are NOT
+  # listed and stay fully scanned.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_INVOICE_WEBHOOK_URL"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
