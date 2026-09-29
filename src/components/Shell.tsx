@@ -13,6 +13,8 @@ import {
   FileBarChart,
   Users,
   Droplet,
+  Receipt,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -21,13 +23,17 @@ import { useAuth } from "@/lib/supabase/auth-context";
 import { createClient } from "@/lib/supabase/client";
 import { ThemeProvider, useTheme } from "@/lib/theme";
 
+// Apskaita always stays gold/amber — it already complements every theme.
+const APSKAITA_TONE = { active: "bg-amber-50 text-amber-800", dot: "bg-amber-500" };
+// Everything that reads/writes the tenant's Invoice123 account lives in one section.
+const INVOICE123_TONE = { active: "bg-sky-50 text-sky-800", dot: "bg-sky-500" };
+
 const NAV_SECTIONS = [
   {
     label: "Veterinarija",
     themed: true,
     items: [
       { href: "/", label: "Pagrindinis", icon: LayoutDashboard },
-      { href: "/clients", label: "Klientai", icon: Users },
       { href: "/animals", label: "Gyvūnai", icon: PawPrint },
       { href: "/visits", label: "Vizitai", icon: Stethoscope },
       { href: "/biocides", label: "Biocidai", icon: Droplet },
@@ -36,17 +42,25 @@ const NAV_SECTIONS = [
   {
     label: "Apskaita",
     themed: false,
+    tone: APSKAITA_TONE,
     items: [
-      { href: "/receiving", label: "Pajamavimas", icon: PackagePlus },
       { href: "/inventory", label: "Atsargos", icon: Boxes },
       { href: "/products", label: "Produktai", icon: Package },
       { href: "/reports", label: "Ataskaitos", icon: FileBarChart },
     ],
   },
+  {
+    label: "Integruota su Sąskaita123",
+    themed: false,
+    tone: INVOICE123_TONE,
+    items: [
+      { href: "/clients", label: "Klientai", icon: Users },
+      { href: "/sales-invoices", label: "Sąskaitos", icon: Receipt },
+      { href: "/receiving", label: "Pajamavimas", icon: PackagePlus },
+      { href: "/settings/invoice123", label: "Nustatymai", icon: Settings },
+    ],
+  },
 ];
-
-// Apskaita always stays gold/amber — it already complements every theme.
-const APSKAITA_TONE = { active: "bg-amber-50 text-amber-800", dot: "bg-amber-500" };
 
 function Brand({ logoUrl, size }: { logoUrl: string | null; size: "sm" | "lg" }) {
   if (logoUrl) {
@@ -146,7 +160,7 @@ function ShellContent({
           {NAV_SECTIONS.map((section) => {
             const tone = section.themed
               ? { active: theme.navVetActive, dot: theme.navVetDot }
-              : APSKAITA_TONE;
+              : section.tone ?? APSKAITA_TONE;
             return (
               <div key={section.label}>
                 <div className="mb-1.5 flex items-center gap-2 px-3">

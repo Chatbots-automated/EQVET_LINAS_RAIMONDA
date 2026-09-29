@@ -12,6 +12,8 @@ import { Input, Select } from "@/components/ui/Field";
 import { UNIT_LABELS } from "@/lib/labels";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
 import { EMPTY_PRODUCT_FORM, ProductFormFields, productFormToPayload } from "@/components/ProductFormFields";
+import { PurchaseDocumentsCard } from "@/components/purchases/PurchaseDocumentsCard";
+import { centsToNumber, toCents } from "@/lib/money";
 
 type Product = Database["public"]["Tables"]["products"]["Row"];
 type Supplier = Database["public"]["Tables"]["suppliers"]["Row"];
@@ -72,6 +74,7 @@ interface ReviewRow {
   quantity: string;
   unit_price: string;
   net: string;
+  vat_rate: string;
 }
 
 const EMPTY_MANUAL_FORM = {
@@ -86,6 +89,8 @@ const EMPTY_MANUAL_FORM = {
   package_count: "",
   received_qty: "",
   unit: "" as Unit | "",
+  as_purchase: false,
+  vat_rate: "21",
 };
 
 const EMPTY_QUICK_SUPPLIER = { name: "", code: "", vat_code: "" };
@@ -129,13 +134,26 @@ export default function ReceivingPage() {
   const [quickSupplierForm, setQuickSupplierForm] = useState(EMPTY_QUICK_SUPPLIER);
   const [quickSupplierSaving, setQuickSupplierSaving] = useState(false);
 
+  // Invoice123 purchase sync: after saving a purchase document, the documents
+  // card opens its "Siųsti į Sąskaita123" dialog for it.
+  const [invoice123Enabled, setInvoice123Enabled] = useState(false);
+  const [purchasesReloadKey, setPurchasesReloadKey] = useState(0);
+  const [openPurchaseId, setOpenPurchaseId] = useState<string | null>(null);
+
+  function purchaseSaved(purchaseId: string) {
+    setPurchasesReloadKey((k) => k + 1);
+    if (invoice123Enabled) setOpenPurchaseId(purchaseId);
+  }
+
   async function loadReference() {
-    const [{ data: p }, { data: s }] = await Promise.all([
+    const [{ data: p }, { data: s }, { data: i123 }] = await Promise.all([
       supabase.from("products").select("*").eq("is_active", true).order("name"),
       supabase.from("suppliers").select("*").order("name"),
+      supabase.from("invoice123_settings").select("enabled").maybeSingle(),
     ]);
     setProducts(p ?? []);
     setSuppliers(s ?? []);
+    setInvoice123Enabled(!!i123?.enabled);
   }
 
   async function loadLog() {
@@ -200,8 +218,47 @@ export default function ReceivingPage() {
       return;
     }
 
+    const supplier = suppliers.find((s) => s.id === manualForm.supplier_id);
+    const netCents = toCents(manualForm.purchase_price);
+    const vatRate = Number(manualForm.vat_rate);
+    if (manualForm.as_purchase) {
+      if (!supplier) return setManualError("Pirkimui Sąskaita123 nurodykite tiekėją.");
+      if (!manualForm.doc_number.trim() || !manualForm.doc_date) return setManualError("Pirkimui Sąskaita123 nurodykite dokumento Nr. ir datą.");
+      if (netCents === null || netCents <= 0) return setManualError("Pirkimui Sąskaita123 nurodykite pirkimo kainą.");
+      if (!Number.isInteger(vatRate) || vatRate < 0 || vatRate > 100) return setManualError("PVM tarifas turi būti sveikas skaičius, pvz. 21.");
+    }
+
     setManualSaving(true);
-    const { error } = await supabase.from("batches").insert({
+
+    // Optional purchase document (supplier invoice) so it can go to Invoice123.
+    let purchaseId: string | null = null;
+    if (manualForm.as_purchase && supplier && netCents !== null) {
+      const vatCents = Math.floor((netCents * vatRate + 50) / 100);
+      const { data: purchase, error: purchaseError } = await supabase
+        .from("invoices")
+        .insert({
+          invoice_number: manualForm.doc_number.trim(),
+          invoice_date: manualForm.doc_date,
+          supplier_id: supplier.id,
+          supplier_name: supplier.name,
+          supplier_code: supplier.code,
+          supplier_vat: supplier.vat_code,
+          currency: "EUR",
+          total_net: centsToNumber(netCents),
+          total_vat: centsToNumber(vatCents),
+          total_gross: centsToNumber(netCents + vatCents),
+        })
+        .select("id")
+        .single();
+      if (purchaseError) {
+        setManualSaving(false);
+        return setManualError(purchaseError.message);
+      }
+      purchaseId = purchase.id;
+    }
+
+    const { data: batch, error } = await supabase.from("batches").insert({
+      invoice_id: purchaseId,
       product_id: product.id,
       supplier_id: manualForm.supplier_id || null,
       lot: manualForm.lot.trim() || null,
@@ -213,7 +270,18 @@ export default function ReceivingPage() {
       package_count: manualForm.package_count ? Number(manualForm.package_count) : null,
       received_qty: Number(manualForm.received_qty),
       unit: (manualForm.unit || product.unit) as Unit,
-    });
+    }).select("id").single();
+
+    if (!error && purchaseId && netCents !== null) {
+      await supabase.from("invoice_items").insert({
+        invoice_id: purchaseId,
+        batch_id: batch.id,
+        description: product.name,
+        quantity: Number(manualForm.received_qty),
+        total_price: centsToNumber(netCents),
+        vat_rate: vatRate,
+      });
+    }
 
     setManualSaving(false);
     if (error) {
@@ -223,6 +291,7 @@ export default function ReceivingPage() {
 
     setManualForm(EMPTY_MANUAL_FORM);
     loadLog();
+    if (purchaseId) purchaseSaved(purchaseId);
   }
 
   // ---------------- pdf upload ----------------
@@ -275,6 +344,12 @@ export default function ReceivingPage() {
           quantity: item.qty != null ? String(item.qty) : "",
           unit_price: item.unit_price != null ? String(item.unit_price) : "",
           net: item.net != null ? String(item.net) : "",
+          vat_rate:
+            item.vat_rate != null
+              ? String(Math.round(item.vat_rate))
+              : item.vat != null && item.net
+                ? String(Math.round((item.vat / item.net) * 100))
+                : "",
         }))
       );
     } catch (err) {
@@ -388,11 +463,13 @@ export default function ReceivingPage() {
           quantity: Number(row.quantity) || 0,
           unit_price: row.unit_price ? Number(row.unit_price) : null,
           total_price: row.net ? Number(row.net) : null,
+          vat_rate: row.vat_rate !== "" && Number.isFinite(Number(row.vat_rate)) ? Number(row.vat_rate) : null,
         });
       }
 
       resetPdfImport();
       loadLog();
+      purchaseSaved(invoice.id);
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : "Nepavyko importuoti sąskaitos.");
     } finally {
@@ -797,7 +874,7 @@ export default function ReceivingPage() {
                 ))}
               </Select>
               <Input
-                label="Pirkimo kaina (viso)"
+                label="Pirkimo kaina (viso, be PVM)"
                 type="number"
                 step="any"
                 value={manualForm.purchase_price}
@@ -838,6 +915,29 @@ export default function ReceivingPage() {
                 onChange={(e) => setManualForm({ ...manualForm, doc_date: e.target.value })}
               />
             </div>
+
+            {invoice123Enabled && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={manualForm.as_purchase}
+                    onChange={(e) => setManualForm({ ...manualForm, as_purchase: e.target.checked })}
+                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                  />
+                  Registruoti kaip pirkimą Sąskaita123 (reikia tiekėjo, dokumento Nr., datos ir kainos)
+                </label>
+                {manualForm.as_purchase && (
+                  <Input
+                    label="PVM %"
+                    wrapperClassName="mt-2 max-w-32"
+                    inputMode="numeric"
+                    value={manualForm.vat_rate}
+                    onChange={(e) => setManualForm({ ...manualForm, vat_rate: e.target.value.replace(/[^\d]/g, "") })}
+                  />
+                )}
+              </div>
+            )}
 
             {manualError && (
               <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{manualError}</p>
@@ -890,6 +990,8 @@ export default function ReceivingPage() {
           </div>
         )}
       </Card>
+
+      <PurchaseDocumentsCard reloadKey={purchasesReloadKey} openPurchaseId={openPurchaseId} />
 
       <Modal
         open={quickProductOpen}

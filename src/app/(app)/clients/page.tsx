@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Pencil, Plus, PawPrint, Trash2, Users } from "lucide-react";
+import { Link2, Pencil, Plus, PawPrint, Receipt, RefreshCw, Trash2, Upload, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -11,6 +11,14 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Textarea } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
+import {
+  createInvoice123ClientAction,
+  importInvoice123ClientsAction,
+  linkClientAction,
+  pushClientToInvoice123Action,
+} from "@/app/(app)/sales-invoices/actions";
+import { ClientLinkPanel } from "@/components/invoices/InvoiceDraftModal";
+import type { ClientLinkState } from "@/lib/invoice123/clients";
 
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type SourceFilter = "all" | "invoice123" | "manual";
@@ -44,6 +52,12 @@ export default function ClientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [syncing, setSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [pushingId, setPushingId] = useState<string | null>(null);
+  // Same-name matches found in Invoice123 — the user decides: link or create new.
+  const [linkChoice, setLinkChoice] = useState<{ client: { id: string; name: string }; link: ClientLinkState } | null>(null);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -63,6 +77,8 @@ export default function ClientsPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
+    // Keep the list mirrored with Invoice123 (new / changed / deleted there).
+    syncFromInvoice123({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -105,9 +121,9 @@ export default function ClientsPage() {
       notes: form.notes.trim() || null,
     };
 
-    const { error } = editing
-      ? await supabase.from("clients").update(payload).eq("id", editing.id)
-      : await supabase.from("clients").insert(payload);
+    const { data: saved, error } = editing
+      ? await supabase.from("clients").update(payload).eq("id", editing.id).select("id, name").single()
+      : await supabase.from("clients").insert(payload).select("id, name").single();
 
     setSaving(false);
     if (error) {
@@ -115,7 +131,74 @@ export default function ClientsPage() {
       return;
     }
     setModalOpen(false);
+    await load();
+    // New clients go straight to Invoice123 (edits can't — the API has no client update).
+    if (!editing && saved) await pushToInvoice123(saved);
+  }
+
+  async function pushToInvoice123(c: { id: string; name: string }) {
+    setPushingId(c.id);
+    setSyncNotice(null);
+    const res = await pushClientToInvoice123Action(c.id);
+    setPushingId(null);
+    if (!res.ok) {
+      setSyncNotice({ tone: "error", text: `Klientas „${c.name}“ išsaugotas EQ VET, bet neįkeltas į Sąskaita123: ${res.error}` });
+      return;
+    }
+    if (res.data.state === "linked") {
+      setSyncNotice({ tone: "ok", text: `Klientas „${c.name}“ įkeltas į Sąskaita123.` });
+      load();
+    } else if (res.data.state === "unlinked") {
+      setLinkChoice({ client: c, link: res.data });
+    }
+  }
+
+  async function resolveLinkChoice(invoice123ClientId: string | null) {
+    if (!linkChoice) return;
+    setLinkBusy(true);
+    const { client } = linkChoice;
+    const res = invoice123ClientId
+      ? await linkClientAction(client.id, invoice123ClientId)
+      : await createInvoice123ClientAction(client.id);
+    setLinkBusy(false);
+    if (!res.ok) {
+      setSyncNotice({ tone: "error", text: res.error });
+      return;
+    }
+    setLinkChoice(null);
+    setSyncNotice({
+      tone: "ok",
+      text: invoice123ClientId ? `Klientas „${client.name}“ susietas su esamu Sąskaita123 klientu.` : `Klientas „${client.name}“ sukurtas Sąskaita123.`,
+    });
     load();
+  }
+
+  // silent: automatic sync on page open — no "nothing changed" message, and
+  // no error for tenants that haven't connected Invoice123 yet.
+  async function syncFromInvoice123({ silent = false } = {}) {
+    setSyncing(true);
+    if (!silent) setSyncNotice(null);
+    const res = await importInvoice123ClientsAction();
+    setSyncing(false);
+    if (!res.ok) {
+      if (!silent) setSyncNotice({ tone: "error", text: res.error });
+      return;
+    }
+    const { inserted, updated, linked, removed, unlinked } = res.data;
+    const parts = [
+      inserted && `${inserted} nauji`,
+      updated && `${updated} atnaujinti`,
+      linked && `${linked} susieti su esamais`,
+      removed.length && `pašalinti (ištrinti Sąskaita123): ${removed.join(", ")}`,
+      unlinked.length &&
+        `atsieti, bet palikti EQ VET, nes turi gyvūnų ar sąskaitų (ištrinti Sąskaita123): ${unlinked.join(", ")}`,
+    ].filter(Boolean);
+    if (parts.length) {
+      setSyncNotice({ tone: "ok", text: `Sąskaita123 klientai: ${parts.join("; ")}.` });
+      load();
+    } else if (!silent) {
+      setSyncNotice({ tone: "ok", text: "Klientai sutampa su Sąskaita123 — pakeitimų nėra." });
+    }
   }
 
   async function handleDelete(c: ClientRow) {
@@ -141,11 +224,23 @@ export default function ClientsPage() {
       <PageHeader
         title="Klientai"
         actions={
-          <Button onClick={openCreate}>
-            <Plus size={16} /> Naujas klientas
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => syncFromInvoice123()} disabled={syncing}>
+              <RefreshCw size={16} className={syncing ? "animate-spin" : ""} />
+              {syncing ? "Sinchronizuojama..." : "Sinchronizuoti su Sąskaita123"}
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus size={16} /> Naujas klientas
+            </Button>
+          </>
         }
       />
+
+      {syncNotice && (
+        <p className={`mb-4 rounded-lg px-3 py-2 text-sm ${syncNotice.tone === "ok" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
+          {syncNotice.text}
+        </p>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
@@ -225,6 +320,24 @@ export default function ClientsPage() {
                   <td className="px-5 py-3 text-slate-600">{animalCounts[c.id] ?? 0}</td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex justify-end gap-1">
+                      {c.external_source !== "invoice123" && (
+                        <button
+                          onClick={() => pushToInvoice123(c)}
+                          disabled={pushingId === c.id}
+                          className="rounded-md p-1.5 text-slate-500 hover:bg-sky-50 hover:text-sky-700 disabled:animate-pulse"
+                          title="Įkelti į Sąskaita123"
+                          aria-label="Įkelti į Sąskaita123"
+                        >
+                          <Upload size={16} />
+                        </button>
+                      )}
+                      <Link
+                        href={`/sales-invoices?client=${c.id}`}
+                        className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                        title="Sąskaitos"
+                      >
+                        <Receipt size={16} />
+                      </Link>
                       <Link
                         href={`/animals?client=${c.id}`}
                         className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
@@ -255,6 +368,23 @@ export default function ClientsPage() {
           </div>
         )}
       </Card>
+
+      <Modal
+        open={!!linkChoice}
+        onClose={() => setLinkChoice(null)}
+        title="Įkėlimas į Sąskaita123"
+        icon={<Link2 size={18} />}
+        iconClassName="bg-sky-50 text-sky-700"
+      >
+        {linkChoice && (
+          <ClientLinkPanel
+            link={linkChoice.link}
+            busy={linkBusy}
+            clientName={linkChoice.client.name}
+            onLink={resolveLinkChoice}
+          />
+        )}
+      </Modal>
 
       <Modal
         open={modalOpen}
@@ -319,6 +449,16 @@ export default function ClientsPage() {
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
           />
+
+          {editing?.external_source === "invoice123" && (
+            <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              Šis klientas susietas su Sąskaita123. Pakeitimai išsaugomi tik EQ VET — Sąskaita123 neleidžia
+              redaguoti klientų per API, todėl juos pakeiskite ir Sąskaita123.
+            </p>
+          )}
+          {!editing && (
+            <p className="text-xs text-slate-500">Išsaugojus klientas bus automatiškai įkeltas į Sąskaita123.</p>
+          )}
 
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 

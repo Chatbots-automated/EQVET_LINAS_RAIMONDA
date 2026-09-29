@@ -49,6 +49,9 @@ supabase/migrations/20260918000003_profile_theme.sql         -- paskyros spalvų
 supabase/migrations/20260925000001_biocide_category.sql      -- kategorija „Biocidai“ (BŪTINAI atskirai!)
 supabase/migrations/20260925000002_biocide_usage_and_journals.sql -- biocidų naudojimas + žurnalų views
 supabase/migrations/20260927000001_invoice123_clients.sql      -- Invoice123 klientų sinchronizacija (n8n)
+supabase/migrations/20260928000001_invoice123_settings.sql     -- Sąskaita123 integracija: nustatymai + užšifruoti API raktai
+supabase/migrations/20260928000002_sales_invoices.sql          -- pardavimo sąskaitos, eilutės, mokėjimai, audito žurnalas, PDF saugykla
+supabase/migrations/20260929000001_invoice123_purchases.sql     -- pirkimai (Pajamavimas) → Sąskaita123 išlaidos
 ```
 
 Naujus migracijų failus ateityje pridėsime tuo pačiu principu — vienas
@@ -80,6 +83,11 @@ SUPABASE_SERVICE_ROLE_KEY=...
 
 # Neprivaloma: sąskaitų PDF nuskaitymo webhook (žr. žemiau).
 NEXT_PUBLIC_INVOICE_WEBHOOK_URL=
+
+# Tik serverio pusei — AES-256-GCM raktas Sąskaita123 API raktams šifruoti.
+# Turi sutapti visose aplinkose (lokaliai ir Netlify), kitaip išsaugoti
+# raktai nebus iššifruojami.
+INVOICE123_TOKEN_ENCRYPTION_KEY=
 ```
 
 ### 4. Įdiekite paketus ir paleiskite
@@ -121,6 +129,54 @@ Realus webhook atsakymo formatas (n8n grąžina `payload` objektą tiesiogiai):
 
 Kol `NEXT_PUBLIC_INVOICE_WEBHOOK_URL` nenustatytas, PDF importo skirtukas
 rodo pranešimą ir programa automatiškai naudoja rankinį režimą.
+
+## Sąskaita123 (Invoice123) integracija
+
+Vienas integracijos kodas visiems gydytojams — skiriasi tik kiekvieno
+vartotojo (`user_id`) konfigūracija. Jokių `if (linas)` sąlygų.
+
+- **Prijungimas:** Nustatymai → Sąskaita123 → įklijuoti API raktą →
+  „Prisijungti“. Raktas patikrinamas su Invoice123 prieš išsaugant, tada
+  automatiškai sinchronizuojamos serijos, vienetai, bankai, PVM ir kt.
+  Pasirinkus numatytąsias reikšmes ir pažymėjus „Integracija aktyvi“ —
+  paruošta.
+- **Raktų saugumas:** raktas šifruojamas serveryje (AES-256-GCM,
+  `INVOICE123_TOKEN_ENCRYPTION_KEY`) ir laikomas `invoice123_credentials`
+  lentelėje, kurią gali skaityti tik `service_role`. Naršyklė niekada negauna
+  rakto — rodomi tik paskutiniai 4 simboliai.
+- **Klientai:** Klientai → „Sinchronizuoti su Sąskaita123“ (pakeičia n8n
+  sinchronizaciją). Išrašant sąskaitą nesusietam klientui: įmonės susiejamos
+  pagal įmonės kodą, privatūs asmenys — tik vartotojui patvirtinus (niekada
+  automatiškai pagal vardą), arba sukuriamas naujas Sąskaita123 klientas.
+- **Sąskaitos:** Vizitas → „Išrašyti sąskaitą“ arba Sąskaitos → „Nauja
+  sąskaita“. Pirma sukuriamas vietinis įrašas (`sales_invoices`, būsena
+  `creating`), tada kviečiamas Sąskaita123. Oficialų numerį (pvz. SF 22)
+  suteikia tik Sąskaita123. Dvigubas paspaudimas / pakartojimas su tuo pačiu
+  raktu niekada nesukuria antros sąskaitos; neaiškus rezultatas (timeout)
+  patikrinamas Sąskaita123 prieš leidžiant kartoti. Sumos perskaičiuojamos
+  serveryje sveikais centais.
+- **Sąskaitos (PDF, mokėjimai):** PDF saugomas privačioje `invoice-pdfs`
+  saugykloje ir pateikiamas per `/api/sales-invoices/[id]/pdf` tik savininkui.
+  Mokėjimai (pavedimas / grynais / kita, daliniai) registruojami Sąskaita123.
+  „Atnaujinti iš Sąskaita123“ importuoja esamas sąskaitas ir atnaujina
+  apmokėjimo būseną.
+- **Klientų įkėlimas:** naujas klientas (Klientai → Naujas klientas) iškart
+  įkeliamas į Sąskaita123; nesusietiems — mygtukas „Įkelti į Sąskaita123“.
+  Sąskaita123 API neleidžia redaguoti klientų, todėl vėlesni pakeitimai lieka
+  tik EQ VET.
+- **Pirkimai:** Pajamavimas → pirkimo dokumentas (PDF importas arba rankinis
+  su „Registruoti kaip pirkimą Sąskaita123“) → „Siųsti į Sąskaita123“.
+  PVM tarifas patvirtinamas kiekvienai eilutei; suma su PVM skaičiuojama taip
+  pat kaip Sąskaita123 (patikrinta su esamomis išlaidomis). Jei tas pats
+  tiekėjo dokumentas jau yra Sąskaita123 — susiejama, dublikatas nekuriamas.
+  Išlaidų tipas pasirenkamas nustatymuose (API jų sąrašo neteikia, todėl
+  siūlomi naudoti ankstesnėse išlaidose).
+- **PVM:** PVM mokėtojų paskyroms sąskaitų išrašymas kol kas blokuojamas —
+  PVM skaičiavimas bus įjungtas tik patikrinus su tikra PVM mokėtojo paskyra.
+- **Kodas:** `src/lib/invoice123/` (vienintelis HTTP klientas `client.ts`),
+  serverio veiksmai `src/app/(app)/settings/invoice123/actions.ts`. Nuomininkas
+  visada nustatomas iš patikrintos sesijos (`src/lib/tenant.ts`), niekada iš
+  naršyklės duomenų.
 
 ## Invoice123 klientų sinchronizacija (n8n)
 

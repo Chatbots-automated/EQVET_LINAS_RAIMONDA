@@ -6,11 +6,18 @@
 // GenericView constraint requires the field to exist, and silently falls
 // back to `never` (breaking .insert()/.update() typing) if it's missing.
 
-export type Unit = "ml" | "l" | "g" | "kg" | "vnt" | "tabletkė" | "dozė";
+import type { Invoice123RemoteOptions } from "@/lib/invoice123/types";
+
+export type Unit ="ml" | "l" | "g" | "kg" | "vnt" | "tabletkė" | "dozė";
 export type ProductCategory = "medicines" | "vaccines" | "biocides" | "materials" | "hygiene" | "other";
 export type BatchStatus = "active" | "depleted" | "expired";
 export type StockStatus = "expired" | "depleted" | "low" | "available";
 export type MovementType = "pajamavimas" | "nurašymas";
+export type SalesInvoiceSource = "gvet" | "invoice123_import";
+export type SalesInvoiceStatus = "creating" | "created" | "failed" | "needs_reconcile";
+export type PaymentStatus = "unpaid" | "partial" | "paid" | "overpaid";
+export type PaymentType = "transfer" | "cash" | "refund" | "other";
+export type PurchaseSyncStatus = "not_sent" | "sending" | "sent" | "failed" | "needs_reconcile";
 
 export interface Database {
   public: {
@@ -122,6 +129,11 @@ export interface Database {
           total_vat: number | null;
           total_gross: number | null;
           pdf_filename: string | null;
+          invoice123_expense_id: string | null;
+          invoice123_sync_status: PurchaseSyncStatus;
+          invoice123_sync_error: string | null;
+          invoice123_sync_started_at: string | null;
+          invoice123_synced_at: string | null;
           created_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["invoices"]["Row"]>;
@@ -138,6 +150,7 @@ export interface Database {
           quantity: number | null;
           unit_price: number | null;
           total_price: number | null;
+          vat_rate: number | null;
           created_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["invoice_items"]["Row"]> & { invoice_id: string };
@@ -265,6 +278,179 @@ export interface Database {
           unit: Unit;
         };
         Update: Partial<Database["public"]["Tables"]["biocide_usage"]["Row"]>;
+        Relationships: [];
+      };
+      invoice123_settings: {
+        Row: {
+          id: string;
+          user_id: string;
+          enabled: boolean;
+          default_series_id: string | null;
+          default_series_title: string | null;
+          default_unit_id: string | null;
+          default_unit_name: string | null;
+          default_activity_id: string | null;
+          default_activity_name: string | null;
+          default_bank_id: string | null;
+          default_bank_name: string | null;
+          default_vat_id: string | null;
+          default_expense_type_id: string | null;
+          default_expense_type_name: string | null;
+          default_language: string;
+          default_country_code: string;
+          default_payment_term_days: number;
+          issued_by: string | null;
+          company_vat_enabled: boolean | null;
+          company_vat_status: string | null;
+          remote_options: Invoice123RemoteOptions | null;
+          last_config_sync_at: string | null;
+          last_connection_ok_at: string | null;
+          last_error: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["invoice123_settings"]["Row"]>;
+        Update: Partial<Database["public"]["Tables"]["invoice123_settings"]["Row"]>;
+        Relationships: [];
+      };
+      // sales_* + invoice123_audit_log: authenticated has SELECT only; all
+      // writes go through the server (service_role).
+      sales_invoices: {
+        Row: {
+          id: string;
+          user_id: string;
+          client_id: string | null;
+          visit_id: string | null;
+          animal_id: string | null;
+          source: SalesInvoiceSource;
+          idempotency_key: string | null;
+          status: SalesInvoiceStatus;
+          creation_started_at: string | null;
+          sync_error: string | null;
+          invoice123_invoice_id: string | null;
+          invoice123_client_id: string | null;
+          series_title: string | null;
+          series_number: number | null;
+          invoice_type: string;
+          date: string;
+          date_due: string | null;
+          subtotal: number;
+          vat_total: number;
+          total: number;
+          paid_total: number;
+          payment_status: PaymentStatus;
+          invoice123_paid: boolean | null;
+          currency_code: string;
+          language: string;
+          issued_by: string | null;
+          client_name: string;
+          client_code: string | null;
+          client_vat_code: string | null;
+          client_address: string | null;
+          client_country_code: string | null;
+          pdf_storage_path: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["sales_invoices"]["Row"]> & {
+          user_id: string;
+          status: SalesInvoiceStatus;
+          date: string;
+          total: number;
+          client_name: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["sales_invoices"]["Row"]>;
+        Relationships: [];
+      };
+      sales_invoice_items: {
+        Row: {
+          id: string;
+          user_id: string;
+          invoice_id: string;
+          position: number;
+          title: string;
+          description: string | null;
+          quantity: number;
+          unit_price: number;
+          line_total: number;
+          unit_name: string | null;
+          product_id: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["sales_invoice_items"]["Row"]> & {
+          user_id: string;
+          invoice_id: string;
+          title: string;
+          quantity: number;
+          unit_price: number;
+          line_total: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["sales_invoice_items"]["Row"]>;
+        Relationships: [];
+      };
+      sales_invoice_payments: {
+        Row: {
+          id: string;
+          user_id: string;
+          invoice_id: string;
+          idempotency_key: string | null;
+          invoice123_payment_id: string | null;
+          payment_type: PaymentType;
+          amount: number;
+          payment_date: string;
+          status: "pending" | "synced" | "failed";
+          sync_error: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["sales_invoice_payments"]["Row"]> & {
+          user_id: string;
+          invoice_id: string;
+          payment_type: PaymentType;
+          amount: number;
+          payment_date: string;
+          status: "pending" | "synced" | "failed";
+        };
+        Update: Partial<Database["public"]["Tables"]["sales_invoice_payments"]["Row"]>;
+        Relationships: [];
+      };
+      invoice123_audit_log: {
+        Row: {
+          id: string;
+          user_id: string;
+          actor_id: string | null;
+          action: string;
+          entity_type: string | null;
+          entity_id: string | null;
+          result: "ok" | "error";
+          details: Record<string, unknown> | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["invoice123_audit_log"]["Row"]> & {
+          user_id: string;
+          action: string;
+          result: "ok" | "error";
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice123_audit_log"]["Row"]>;
+        Relationships: [];
+      };
+      // service_role only (no RLS policies) — only src/lib/supabase/admin.ts can touch it.
+      invoice123_credentials: {
+        Row: {
+          user_id: string;
+          token_ciphertext: string;
+          token_hint: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["invoice123_credentials"]["Row"]> & {
+          user_id: string;
+          token_ciphertext: string;
+          token_hint: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["invoice123_credentials"]["Row"]>;
         Relationships: [];
       };
     };

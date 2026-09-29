@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ClipboardList, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ClipboardList, Pencil, Plus, Receipt, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -11,12 +11,14 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { InvoiceDraftModal, type DraftLine } from "@/components/invoices/InvoiceDraftModal";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type Product = Database["public"]["Tables"]["products"]["Row"];
 type BatchRow = Database["public"]["Views"]["stock_by_batch"]["Row"];
 type Visit = Database["public"]["Views"]["visit_history_view"]["Row"];
+type VisitInvoice = Pick<Database["public"]["Tables"]["sales_invoices"]["Row"], "id" | "status" | "series_title" | "series_number" | "total">;
 
 interface UsageLine {
   product_id: string;
@@ -76,6 +78,9 @@ function VisitsPageInner() {
   const [addLineSaving, setAddLineSaving] = useState(false);
   const [addLineError, setAddLineError] = useState<string | null>(null);
 
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [visitInvoices, setVisitInvoices] = useState<VisitInvoice[]>([]);
+
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailForm, setDetailForm] = useState(EMPTY_VISIT_FORM);
   const [detailSaving, setDetailSaving] = useState(false);
@@ -118,6 +123,40 @@ function VisitsPageInner() {
     loadVisits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animalFilter]);
+
+  async function loadVisitInvoices(visitId: string) {
+    const { data } = await supabase
+      .from("sales_invoices")
+      .select("id, status, series_title, series_number, total")
+      .eq("visit_id", visitId)
+      .order("created_at");
+    setVisitInvoices(data ?? []);
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (detailVisit) loadVisitInvoices(detailVisit.visit_id);
+    else setVisitInvoices([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailVisit?.visit_id]);
+
+  // Draft lines for "Išrašyti sąskaitą": the visit's services + products used.
+  // Products have no sale price in EQ VET, so their price is left for the vet to fill in.
+  const invoiceLines = useMemo<DraftLine[]>(() => {
+    if (!detailVisit) return [];
+    const lines: DraftLine[] = [];
+    if (detailVisit.services || detailVisit.service_price) {
+      lines.push({
+        title: detailVisit.services || "Veterinarinės paslaugos",
+        quantity: "1",
+        unitPrice: detailVisit.service_price != null ? String(detailVisit.service_price) : "",
+      });
+    }
+    for (const u of detailVisit.products_used) {
+      lines.push({ title: u.product_name, quantity: String(u.quantity), unitPrice: "" });
+    }
+    return lines;
+  }, [detailVisit]);
 
   function batchesForProduct(productId: string) {
     return batches.filter((b) => b.product_id === productId);
@@ -751,6 +790,36 @@ function VisitsPageInner() {
               {addLineError && <p className="mt-1 text-xs text-red-600">{addLineError}</p>}
             </div>
 
+            <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm">
+                  <div className="font-medium text-slate-700">Sąskaitos</div>
+                  {visitInvoices.length === 0 ? (
+                    <div className="text-slate-500">Sąskaita dar neišrašyta.</div>
+                  ) : (
+                    <div className="text-slate-700">
+                      {visitInvoices.map((i) => (
+                        <span key={i.id} className="mr-3">
+                          {i.status === "created" ? `${i.series_title ?? ""} ${i.series_number ?? ""}` : "neišrašyta"} · {formatMoney(i.total)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setInvoiceOpen(true)}
+                  disabled={!detailVisit.client_id}
+                  title={detailVisit.client_id ? undefined : "Gyvūnas nepriskirtas klientui"}
+                >
+                  <Receipt size={14} /> Išrašyti sąskaitą
+                </Button>
+              </div>
+              {!detailVisit.client_id && (
+                <p className="mt-1 text-xs text-slate-500">Norint išrašyti sąskaitą, gyvūnas turi būti priskirtas klientui.</p>
+              )}
+            </div>
+
             <div className="flex justify-end pt-2">
               <Button variant="danger" onClick={() => handleDeleteVisit(detailVisit)}>
                 <Trash2 size={16} /> Ištrinti vizitą
@@ -759,6 +828,19 @@ function VisitsPageInner() {
           </div>
         )}
       </Modal>
+
+      <InvoiceDraftModal
+        open={invoiceOpen}
+        onClose={() => {
+          setInvoiceOpen(false);
+          if (detailVisit) loadVisitInvoices(detailVisit.visit_id);
+        }}
+        clients={clients}
+        initialClientId={detailVisit?.client_id ?? null}
+        lockClient
+        visitId={detailVisit?.visit_id ?? null}
+        initialLines={invoiceLines}
+      />
     </div>
   );
 }
