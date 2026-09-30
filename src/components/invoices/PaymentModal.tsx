@@ -5,8 +5,8 @@ import { Wallet } from "lucide-react";
 import type { Database } from "@/lib/database.types";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Field";
-import { formatMoney } from "@/lib/format";
+import { DateInput, Input, Select } from "@/components/ui/Field";
+import { formatMoney, todayISO } from "@/lib/format";
 import { centsToString, toCents } from "@/lib/money";
 import { PAYMENT_TYPE_LABELS } from "@/lib/labels";
 import { addPaymentAction } from "@/app/(app)/sales-invoices/actions";
@@ -38,7 +38,7 @@ export function PaymentModal({
     /* eslint-disable react-hooks/set-state-in-effect */
     setKey(crypto.randomUUID());
     setType("transfer");
-    setDate(new Date().toISOString().slice(0, 10));
+    setDate(todayISO());
     setAmount(centsToString(remainingCents));
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
@@ -91,7 +91,7 @@ export function PaymentModal({
             ))}
           </Select>
           <div className="grid grid-cols-2 gap-3">
-            <Input label="Data" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            <DateInput label="Data" required value={date} onChange={setDate} />
             <Input label="Suma, €" inputMode="decimal" required value={amount} onChange={(e) => setAmount(e.target.value)} />
           </div>
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

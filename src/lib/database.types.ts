@@ -102,6 +102,7 @@ export interface Database {
           withdrawal_imm_milk: number | null;
           withdrawal_pos_meat: number | null;
           withdrawal_pos_milk: number | null;
+          markup_percent: number | null;
           notes: string | null;
           is_active: boolean;
           created_at: string;
@@ -225,6 +226,7 @@ export interface Database {
           first_symptoms_date: string | null;
           tests: string | null;
           outcome: string | null;
+          completed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -243,6 +245,9 @@ export interface Database {
           qty: number;
           unit: Unit;
           administration_route: string | null;
+          unit_cost: number | null;
+          markup_percent: number | null;
+          sale_total: number | null;
           created_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["usage_items"]["Row"]> & {
@@ -253,6 +258,52 @@ export interface Database {
           unit: Unit;
         };
         Update: Partial<Database["public"]["Tables"]["usage_items"]["Row"]>;
+        Relationships: [];
+      };
+      visit_services: {
+        Row: {
+          id: string;
+          user_id: string;
+          visit_id: string;
+          title: string;
+          price: number | null;
+          position: number;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["visit_services"]["Row"]> & {
+          visit_id: string;
+          title: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["visit_services"]["Row"]>;
+        Relationships: [];
+      };
+      service_catalog: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          price: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["service_catalog"]["Row"]> & { name: string };
+        Update: Partial<Database["public"]["Tables"]["service_catalog"]["Row"]>;
+        Relationships: [];
+      };
+      // Which visits an invoice covers. SELECT only for authenticated; written by the server.
+      sales_invoice_visits: {
+        Row: {
+          invoice_id: string;
+          visit_id: string;
+          user_id: string;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["sales_invoice_visits"]["Row"]> & {
+          invoice_id: string;
+          visit_id: string;
+          user_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["sales_invoice_visits"]["Row"]>;
         Relationships: [];
       };
       biocide_usage: {
@@ -534,15 +585,27 @@ export interface Database {
           client_id: string | null;
           client_name: string | null;
           products_used: {
+            usage_item_id: string;
+            product_id: string;
             product_name: string;
             quantity: number;
             unit: Unit;
             batch_lot: string | null;
             administration_route: string | null;
+            /** Purchase cost per unit at the moment of use; null when the batch has no purchase price. */
+            unit_cost: number | null;
+            markup_percent: number | null;
+            /** Selling price of the whole line. */
+            sale_total: number | null;
           }[];
           first_symptoms_date: string | null;
           tests: string | null;
           outcome: string | null;
+          completed_at: string | null;
+          service_lines: { id: string; title: string; price: number | null }[];
+          medicines_total: number | null;
+          /** Services + medicines. */
+          total_price: number;
         };
         Relationships: [];
       };
@@ -649,6 +712,15 @@ export interface Database {
       fn_fifo_batch: {
         Args: { p_product_id: string };
         Returns: string | null;
+      };
+      save_visit_pricing: {
+        Args: {
+          p_visit_id: string;
+          p_services: { title: string; price: number | null }[];
+          p_items: { id: string; markup_percent: number | null; sale_total: number | null }[];
+          p_complete?: boolean;
+        };
+        Returns: undefined;
       };
     };
   };

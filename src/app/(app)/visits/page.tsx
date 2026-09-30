@@ -2,23 +2,29 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ClipboardList, Pencil, Plus, Receipt, Trash2, X } from "lucide-react";
+import Link from "next/link";
+import { BadgeEuro, ClipboardList, Pencil, Plus, Receipt, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { Input, Select, Textarea } from "@/components/ui/Field";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { Badge } from "@/components/ui/Badge";
+import { DateField, DateInput, Input, SearchSelect, Textarea } from "@/components/ui/Field";
+import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
+import { useProfileName } from "@/lib/profile";
+import { visitInvoiceLines, visitServiceLines } from "@/lib/visit-pricing";
+import { loadInvoicesByVisit, type VisitInvoice } from "@/lib/visit-invoices";
+import { loadServiceCatalog, type CatalogService } from "@/lib/service-catalog";
 import { InvoiceDraftModal, type DraftLine } from "@/components/invoices/InvoiceDraftModal";
+import { VisitPricingModal } from "@/components/visits/VisitPricingModal";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type Product = Database["public"]["Tables"]["products"]["Row"];
 type BatchRow = Database["public"]["Views"]["stock_by_batch"]["Row"];
 type Visit = Database["public"]["Views"]["visit_history_view"]["Row"];
-type VisitInvoice = Pick<Database["public"]["Tables"]["sales_invoices"]["Row"], "id" | "status" | "series_title" | "series_number" | "total">;
 
 interface UsageLine {
   product_id: string;
@@ -29,17 +35,18 @@ interface UsageLine {
 
 const EMPTY_VISIT_FORM = {
   animal_id: "",
-  visit_date: new Date().toISOString().slice(0, 10),
+  visit_date: "",
   reason: "",
   diagnosis: "",
   services: "",
-  service_price: "",
   vet_name: "",
   notes: "",
   first_symptoms_date: "",
   tests: "",
   outcome: "",
 };
+
+const FILTER_INPUT = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
 
 const OUTCOME_OPTIONS = ["Pasveiko", "Tęsiamas gydymas", "Nugaišo", "Paskerstas", "Eutanazija"];
 
@@ -59,6 +66,8 @@ function VisitsPageInner() {
   const supabase = createClient();
   const searchParams = useSearchParams();
   const animalFilter = searchParams.get("animal");
+  const visitParam = searchParams.get("visit");
+  const profileName = useProfileName();
 
   const [visits, setVisits] = useState<Visit[]>([]);
   const [animals, setAnimals] = useState<Animal[]>([]);
@@ -78,8 +87,17 @@ function VisitsPageInner() {
   const [addLineSaving, setAddLineSaving] = useState(false);
   const [addLineError, setAddLineError] = useState<string | null>(null);
 
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [visitInvoices, setVisitInvoices] = useState<VisitInvoice[]>([]);
+  // "Vizito užbaigimas" (prices) and the invoice draft each work on their own
+  // visit, so they can follow a just-created visit without the detail modal.
+  const [pricingVisit, setPricingVisit] = useState<Visit | null>(null);
+  const [invoiceVisit, setInvoiceVisit] = useState<Visit | null>(null);
+  const [invoicesByVisit, setInvoicesByVisit] = useState<Map<string, VisitInvoice[]>>(new Map());
+  const [catalog, setCatalog] = useState<CatalogService[]>([]);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [clientFilter, setClientFilter] = useState(searchParams.get("client") ?? "");
+  const [search, setSearch] = useState("");
 
   const [editingDetails, setEditingDetails] = useState(false);
   const [detailForm, setDetailForm] = useState(EMPTY_VISIT_FORM);
@@ -97,6 +115,7 @@ function VisitsPageInner() {
     setClients(cl ?? []);
     setProducts(p ?? []);
     setBatches(b ?? []);
+    setCatalog(await loadServiceCatalog(supabase));
   }
 
   function clientName(id: string | null) {
@@ -124,39 +143,46 @@ function VisitsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animalFilter]);
 
-  async function loadVisitInvoices(visitId: string) {
-    const { data } = await supabase
-      .from("sales_invoices")
-      .select("id, status, series_title, series_number, total")
-      .eq("visit_id", visitId)
-      .order("created_at");
-    setVisitInvoices(data ?? []);
+  async function loadInvoices() {
+    setInvoicesByVisit(await loadInvoicesByVisit(supabase));
   }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (detailVisit) loadVisitInvoices(detailVisit.visit_id);
-    else setVisitInvoices([]);
+    loadInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailVisit?.visit_id]);
+  }, []);
 
-  // Draft lines for "Išrašyti sąskaitą": the visit's services + products used.
-  // Products have no sale price in EQ VET, so their price is left for the vet to fill in.
-  const invoiceLines = useMemo<DraftLine[]>(() => {
-    if (!detailVisit) return [];
-    const lines: DraftLine[] = [];
-    if (detailVisit.services || detailVisit.service_price) {
-      lines.push({
-        title: detailVisit.services || "Veterinarinės paslaugos",
-        quantity: "1",
-        unitPrice: detailVisit.service_price != null ? String(detailVisit.service_price) : "",
-      });
-    }
-    for (const u of detailVisit.products_used) {
-      lines.push({ title: u.product_name, quantity: String(u.quantity), unitPrice: "" });
-    }
-    return lines;
-  }, [detailVisit]);
+  // Deep link from a client's page / an invoice: /visits?visit=<id> opens that visit.
+  useEffect(() => {
+    if (!visitParam || loading) return;
+    const v = visits.find((x) => x.visit_id === visitParam);
+    if (v) openDetail(v);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitParam, loading]);
+
+  const visitInvoices = detailVisit ? invoicesByVisit.get(detailVisit.visit_id) ?? [] : [];
+
+  // Draft lines for "Išrašyti sąskaitą": the visit's services and products,
+  // with the prices confirmed in "Vizito užbaigimas".
+  const invoiceLines = useMemo<DraftLine[]>(() => (invoiceVisit ? visitInvoiceLines(invoiceVisit) : []), [invoiceVisit]);
+
+  async function fetchVisit(visitId: string) {
+    const { data } = await supabase.from("visit_history_view").select("*").eq("visit_id", visitId).single();
+    return data;
+  }
+
+  const filteredVisits = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return visits.filter((v) => {
+      if (dateFrom && v.visit_date < dateFrom) return false;
+      if (dateTo && v.visit_date > dateTo) return false;
+      if (clientFilter && v.client_id !== clientFilter) return false;
+      if (!q) return true;
+      return [v.animal_tag, v.animal_name, v.client_name, v.reason, v.diagnosis, v.services, ...v.products_used.map((u) => u.product_name)]
+        .some((x) => x?.toLowerCase().includes(q));
+    });
+  }, [visits, dateFrom, dateTo, clientFilter, search]);
 
   function batchesForProduct(productId: string) {
     return batches.filter((b) => b.product_id === productId);
@@ -186,7 +212,7 @@ function VisitsPageInner() {
   }
 
   function openCreate() {
-    setForm({ ...EMPTY_VISIT_FORM, animal_id: animalFilter ?? "" });
+    setForm({ ...EMPTY_VISIT_FORM, visit_date: todayISO(), vet_name: profileName, animal_id: animalFilter ?? "" });
     setLines([emptyLine()]);
     setError(null);
     setCreateOpen(true);
@@ -200,6 +226,10 @@ function VisitsPageInner() {
       setError("Pasirinkite gyvūną.");
       return;
     }
+    if (!form.visit_date) {
+      setError("Įveskite vizito datą.");
+      return;
+    }
 
     setSaving(true);
 
@@ -211,8 +241,7 @@ function VisitsPageInner() {
         reason: form.reason.trim() || null,
         diagnosis: form.diagnosis.trim() || null,
         services: form.services.trim() || null,
-        service_price: form.service_price ? Number(form.service_price) : null,
-        vet_name: form.vet_name.trim() || null,
+        vet_name: form.vet_name.trim() || profileName || null,
         notes: form.notes.trim() || null,
         first_symptoms_date: form.first_symptoms_date || null,
         tests: form.tests.trim() || null,
@@ -241,18 +270,20 @@ function VisitsPageInner() {
       if (usageError) usageErrors.push(usageError.message);
     }
 
+    const saved = await fetchVisit(visit.id);
     setSaving(false);
-
-    if (usageErrors.length > 0) {
-      setError(
-        `Vizitas išsaugotas, bet kai kurių produktų nurašyti nepavyko: ${usageErrors.join("; ")}. Galite pridėti juos vėliau vizito kortelėje.`
-      );
-    } else {
-      setCreateOpen(false);
-    }
-
+    setCreateOpen(false);
     loadVisits();
     loadReference();
+
+    if (usageErrors.length > 0) {
+      // The visit exists — open its card so the missing products can be added there.
+      if (saved) openDetail(saved);
+      setAddLineError(`Vizitas išsaugotas, bet kai kurių produktų nurašyti nepavyko: ${usageErrors.join("; ")}. Pridėkite juos čia.`);
+      return;
+    }
+    // Visit finished → prices (antkainis + service prices) right away.
+    if (saved) setPricingVisit(saved);
   }
 
   async function handleDeleteVisit(v: Visit) {
@@ -267,25 +298,17 @@ function VisitsPageInner() {
     loadReference();
   }
 
-  async function handleDeleteUsage(visitId: string, index: number) {
-    // products_used doesn't carry usage_item id, so re-fetch the raw rows to delete precisely.
-    const { data: items } = await supabase
-      .from("usage_items")
-      .select("id")
-      .eq("visit_id", visitId)
-      .order("created_at");
-    const target = items?.[index];
-    if (!target) return;
+  async function handleDeleteUsage(visitId: string, usageItemId: string) {
     if (!confirm("Pašalinti šį panaudotą produktą? Atsargos bus atstatytos.")) return;
 
-    const { error } = await supabase.from("usage_items").delete().eq("id", target.id);
+    const { error } = await supabase.from("usage_items").delete().eq("id", usageItemId);
     if (error) {
       alert(`Nepavyko pašalinti: ${error.message}`);
       return;
     }
     loadVisits();
     loadReference();
-    const { data } = await supabase.from("visit_history_view").select("*").eq("visit_id", visitId).single();
+    const data = await fetchVisit(visitId);
     if (data) setDetailVisit(data);
   }
 
@@ -312,11 +335,7 @@ function VisitsPageInner() {
     setAddLine(emptyLine());
     loadVisits();
     loadReference();
-    const { data } = await supabase
-      .from("visit_history_view")
-      .select("*")
-      .eq("visit_id", detailVisit.visit_id)
-      .single();
+    const data = await fetchVisit(detailVisit.visit_id);
     if (data) setDetailVisit(data);
   }
 
@@ -324,13 +343,14 @@ function VisitsPageInner() {
     setDetailVisit(v);
     setEditingDetails(false);
     setDetailError(null);
+    setAddLineError(null);
+    setAddLine(emptyLine());
     setDetailForm({
       animal_id: v.animal_id ?? "",
       visit_date: v.visit_date,
       reason: v.reason ?? "",
       diagnosis: v.diagnosis ?? "",
       services: v.services ?? "",
-      service_price: v.service_price?.toString() ?? "",
       vet_name: v.vet_name ?? "",
       notes: v.notes ?? "",
       first_symptoms_date: v.first_symptoms_date ?? "",
@@ -341,6 +361,10 @@ function VisitsPageInner() {
 
   async function handleSaveDetails() {
     if (!detailVisit) return;
+    if (!detailForm.visit_date) {
+      setDetailError("Įveskite vizito datą.");
+      return;
+    }
     setDetailSaving(true);
     setDetailError(null);
 
@@ -350,8 +374,6 @@ function VisitsPageInner() {
         visit_date: detailForm.visit_date,
         reason: detailForm.reason.trim() || null,
         diagnosis: detailForm.diagnosis.trim() || null,
-        services: detailForm.services.trim() || null,
-        service_price: detailForm.service_price ? Number(detailForm.service_price) : null,
         vet_name: detailForm.vet_name.trim() || null,
         notes: detailForm.notes.trim() || null,
         first_symptoms_date: detailForm.first_symptoms_date || null,
@@ -368,12 +390,16 @@ function VisitsPageInner() {
 
     setEditingDetails(false);
     loadVisits();
-    const { data } = await supabase
-      .from("visit_history_view")
-      .select("*")
-      .eq("visit_id", detailVisit.visit_id)
-      .single();
+    const data = await fetchVisit(detailVisit.visit_id);
     if (data) setDetailVisit(data);
+  }
+
+  function handlePricingSaved(updated: Visit, thenInvoice: boolean) {
+    setPricingVisit(null);
+    loadVisits();
+    loadReference(); // new services / prices may have been saved to the list
+    if (detailVisit?.visit_id === updated.visit_id) setDetailVisit(updated);
+    if (thenInvoice) setInvoiceVisit(updated);
   }
 
   const filterAnimal = useMemo(
@@ -403,12 +429,54 @@ function VisitsPageInner() {
         </a>
       )}
 
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          placeholder="Ieškoti: gyvūnas, klientas, paslauga, vaistas..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className={`w-full max-w-xs ${FILTER_INPUT}`}
+        />
+        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} className={FILTER_INPUT} aria-label="Klientas">
+          <option value="">Visi klientai</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <div className="w-36">
+          <DateField value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} className={`w-full ${FILTER_INPUT}`} aria-label="Nuo" />
+        </div>
+        <span className="text-sm text-slate-400">–</span>
+        <div className="w-36">
+          <DateField value={dateTo} onChange={setDateTo} min={dateFrom || undefined} className={`w-full ${FILTER_INPUT}`} aria-label="Iki" />
+        </div>
+        {(search || clientFilter || dateFrom || dateTo) && (
+          <button
+            onClick={() => {
+              setSearch("");
+              setClientFilter("");
+              setDateFrom("");
+              setDateTo("");
+            }}
+            className="text-sm text-slate-500 hover:text-slate-700"
+          >
+            Išvalyti ×
+          </button>
+        )}
+        {filteredVisits.length > 0 && (
+          <span className="ml-auto text-sm text-slate-600">
+            {filteredVisits.length} viz. · <span className="font-semibold text-slate-900">{formatMoney(filteredVisits.reduce((s, v) => s + v.total_price, 0))}</span>
+          </span>
+        )}
+      </div>
+
       <Card className="overflow-hidden p-0">
         {loading ? (
           <div className="p-5 text-sm text-slate-500">Kraunama...</div>
-        ) : visits.length === 0 ? (
+        ) : filteredVisits.length === 0 ? (
           <div className="p-5">
-            <EmptyState message="Vizitų dar nėra." />
+            <EmptyState message={visits.length === 0 ? "Vizitų dar nėra." : "Pagal pasirinktus filtrus vizitų nerasta."} />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -418,26 +486,31 @@ function VisitsPageInner() {
                 <th className="px-5 py-3">Data</th>
                 <th className="px-5 py-3">Gyvūnas</th>
                 <th className="px-5 py-3">Priežastis / diagnozė</th>
-                <th className="px-5 py-3">Panaudoti produktai</th>
-                <th className="px-5 py-3">Kaina</th>
+                <th className="px-5 py-3">Paslaugos / produktai</th>
+                <th className="px-5 py-3 text-right">Suma</th>
+                <th className="px-5 py-3">Būsena</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {visits.map((v) => (
+              {filteredVisits.map((v) => (
                 <tr
                   key={v.visit_id}
                   className="cursor-pointer hover:bg-slate-50"
                   onClick={() => openDetail(v)}
                 >
                   <td className="px-5 py-3 text-slate-600">{formatDate(v.visit_date)}</td>
-                  <td className="px-5 py-3 font-medium text-slate-900">{v.animal_tag ?? "—"}</td>
+                  <td className="px-5 py-3">
+                    <div className="font-medium text-slate-900">{v.animal_tag ?? "—"}</div>
+                    {v.client_name && <div className="text-xs text-slate-500">{v.client_name}</div>}
+                  </td>
                   <td className="px-5 py-3 text-slate-600">{v.reason || v.diagnosis || "—"}</td>
                   <td className="px-5 py-3 text-slate-600">
-                    {v.products_used.length > 0
-                      ? v.products_used.map((u) => u.product_name).join(", ")
-                      : "—"}
+                    {[v.services, ...v.products_used.map((u) => u.product_name)].filter(Boolean).join(", ") || "—"}
                   </td>
-                  <td className="px-5 py-3 text-slate-600">{formatMoney(v.service_price)}</td>
+                  <td className="px-5 py-3 text-right text-slate-900">{v.total_price > 0 ? formatMoney(v.total_price) : "—"}</td>
+                  <td className="px-5 py-3">
+                    <VisitStatus visit={v} invoices={invoicesByVisit.get(v.visit_id) ?? []} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -457,25 +530,23 @@ function VisitsPageInner() {
       >
         <form onSubmit={handleCreateSubmit} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Select
+            <SearchSelect
               label="Gyvūnas"
               required
+              placeholder="Ieškoti pagal gyvūną arba klientą..."
               value={form.animal_id}
-              onChange={(e) => setForm({ ...form, animal_id: e.target.value })}
-            >
-              <option value="">— Pasirinkti —</option>
-              {animals.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.tag_no} {clientName(a.client_id) ? `(${clientName(a.client_id)})` : ""}
-                </option>
-              ))}
-            </Select>
-            <Input
+              onChange={(animal_id) => setForm({ ...form, animal_id })}
+              options={animals.map((a) => ({
+                value: a.id,
+                label: [a.tag_no, a.name].filter(Boolean).join(" · "),
+                hint: clientName(a.client_id) ?? undefined,
+              }))}
+            />
+            <DateInput
               label="Vizito data"
-              type="date"
               required
               value={form.visit_date}
-              onChange={(e) => setForm({ ...form, visit_date: e.target.value })}
+              onChange={(visit_date) => setForm({ ...form, visit_date })}
             />
           </div>
 
@@ -495,31 +566,45 @@ function VisitsPageInner() {
           <VisitRegistryFields value={form} onChange={(patch) => setForm({ ...form, ...patch })} />
 
           <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Input
+                label="Suteiktos paslaugos"
+                placeholder="Pvz. Gydymas, apžiūra"
+                value={form.services}
+                onChange={(e) => setForm({ ...form, services: e.target.value })}
+              />
+              {catalog.length > 0 && (
+                <select
+                  value=""
+                  aria-label="Pridėti paslaugą iš sąrašo"
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    if (!name) return;
+                    const current = form.services.split(",").map((s) => s.trim()).filter(Boolean);
+                    if (!current.some((s) => s.toLowerCase() === name.toLowerCase())) current.push(name);
+                    setForm({ ...form, services: current.join(", ") });
+                  }}
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600"
+                >
+                  <option value="">＋ Pridėti paslaugą iš sąrašo…</option>
+                  {catalog.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                      {c.price != null ? ` — ${formatMoney(c.price)}` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
             <Input
-              label="Suteiktos paslaugos"
-              value={form.services}
-              onChange={(e) => setForm({ ...form, services: e.target.value })}
-            />
-            <Input
-              label="Paslaugos kaina"
-              type="number"
-              step="any"
-              value={form.service_price}
-              onChange={(e) => setForm({ ...form, service_price: e.target.value })}
+              label="Veterinarijos gydytojas"
+              value={form.vet_name}
+              onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
             />
           </div>
-
-          <Input
-            label="Veterinarijos gydytojas"
-            value={form.vet_name}
-            onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
-          />
-
-          <Textarea
-            label="Pastabos"
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-          />
+          <p className="-mt-2 text-xs text-slate-500">
+            Kelias paslaugas atskirkite kableliu. Kainos įvedamos išsaugojus vizitą — atsidarys „Vizito užbaigimas“; išsaugotų paslaugų kainos įsirašys pačios.
+          </p>
 
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -580,6 +665,12 @@ function VisitsPageInner() {
             </div>
           </div>
 
+          <Textarea
+            label="Pastabos"
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          />
+
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
@@ -607,12 +698,11 @@ function VisitsPageInner() {
             {editingDetails ? (
               <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Input
+                  <DateInput
                     label="Vizito data"
-                    type="date"
                     required
                     value={detailForm.visit_date}
-                    onChange={(e) => setDetailForm({ ...detailForm, visit_date: e.target.value })}
+                    onChange={(visit_date) => setDetailForm({ ...detailForm, visit_date })}
                   />
                   <Input
                     label="Veterinarijos gydytojas"
@@ -636,20 +726,6 @@ function VisitsPageInner() {
                   value={detailForm}
                   onChange={(patch) => setDetailForm({ ...detailForm, ...patch })}
                 />
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Suteiktos paslaugos"
-                    value={detailForm.services}
-                    onChange={(e) => setDetailForm({ ...detailForm, services: e.target.value })}
-                  />
-                  <Input
-                    label="Paslaugos kaina"
-                    type="number"
-                    step="any"
-                    value={detailForm.service_price}
-                    onChange={(e) => setDetailForm({ ...detailForm, service_price: e.target.value })}
-                  />
-                </div>
                 <Textarea
                   label="Pastabos"
                   value={detailForm.notes}
@@ -692,14 +768,6 @@ function VisitsPageInner() {
                   <div>{detailVisit.outcome || "—"}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-slate-500">Paslaugos</div>
-                  <div>{detailVisit.services || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500">Paslaugos kaina</div>
-                  <div>{formatMoney(detailVisit.service_price)}</div>
-                </div>
-                <div>
                   <div className="text-xs text-slate-500">Veterinarijos gydytojas</div>
                   <div>{detailVisit.vet_name || "—"}</div>
                 </div>
@@ -716,23 +784,43 @@ function VisitsPageInner() {
             )}
 
             <div>
+              <div className="mb-2 text-sm font-medium text-slate-700">Paslaugos</div>
+              {visitServiceLines(detailVisit).length === 0 ? (
+                <p className="text-sm text-slate-500">Paslaugos nenurodytos.</p>
+              ) : (
+                <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {visitServiceLines(detailVisit).map((s, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <span>{s.title}</span>
+                      <span className="text-slate-700">{formatMoney(s.price)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
               <div className="mb-2 text-sm font-medium text-slate-700">Panaudoti produktai</div>
               {detailVisit.products_used.length === 0 ? (
                 <p className="text-sm text-slate-500">Produktai nenurašyti.</p>
               ) : (
                 <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-                  {detailVisit.products_used.map((u, i) => (
-                    <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
+                  {detailVisit.products_used.map((u) => (
+                    <div key={u.usage_item_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                       <span>
                         {u.product_name} — {formatQty(u.quantity, u.unit)}
                         {u.batch_lot ? ` (partija ${u.batch_lot})` : ""}
                       </span>
-                      <button
-                        onClick={() => handleDeleteUsage(detailVisit.visit_id, i)}
-                        className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <span className="flex items-center gap-2">
+                        <span className="text-slate-700">{formatMoney(u.sale_total)}</span>
+                        <button
+                          onClick={() => handleDeleteUsage(detailVisit.visit_id, u.usage_item_id)}
+                          aria-label="Pašalinti produktą"
+                          className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -790,6 +878,19 @@ function VisitsPageInner() {
               {addLineError && <p className="mt-1 text-xs text-red-600">{addLineError}</p>}
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="text-sm">
+                <div className="flex items-center gap-2 font-medium text-slate-700">
+                  Vizito suma
+                  <VisitStatus visit={detailVisit} invoices={[]} />
+                </div>
+                <div className="text-xl font-bold text-slate-900">{formatMoney(detailVisit.total_price)}</div>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => setPricingVisit(detailVisit)}>
+                <BadgeEuro size={14} /> {detailVisit.completed_at ? "Keisti kainas" : "Užbaigti vizitą (kainos)"}
+              </Button>
+            </div>
+
             <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm">
@@ -808,7 +909,7 @@ function VisitsPageInner() {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => setInvoiceOpen(true)}
+                  onClick={() => setInvoiceVisit(detailVisit)}
                   disabled={!detailVisit.client_id}
                   title={detailVisit.client_id ? undefined : "Gyvūnas nepriskirtas klientui"}
                 >
@@ -817,6 +918,11 @@ function VisitsPageInner() {
               </div>
               {!detailVisit.client_id && (
                 <p className="mt-1 text-xs text-slate-500">Norint išrašyti sąskaitą, gyvūnas turi būti priskirtas klientui.</p>
+              )}
+              {detailVisit.client_id && (
+                <Link href={`/clients/${detailVisit.client_id}`} className="mt-1 inline-block text-xs font-medium text-emerald-700 hover:underline">
+                  Visi kliento „{detailVisit.client_name}“ vizitai ir sąskaitos →
+                </Link>
               )}
             </div>
 
@@ -829,19 +935,44 @@ function VisitsPageInner() {
         )}
       </Modal>
 
+      {pricingVisit && (
+        <VisitPricingModal
+          key={pricingVisit.visit_id}
+          visit={pricingVisit}
+          onClose={() => setPricingVisit(null)}
+          onSaved={handlePricingSaved}
+        />
+      )}
+
       <InvoiceDraftModal
-        open={invoiceOpen}
+        open={!!invoiceVisit}
         onClose={() => {
-          setInvoiceOpen(false);
-          if (detailVisit) loadVisitInvoices(detailVisit.visit_id);
+          setInvoiceVisit(null);
+          loadInvoices();
         }}
         clients={clients}
-        initialClientId={detailVisit?.client_id ?? null}
+        initialClientId={invoiceVisit?.client_id ?? null}
         lockClient
-        visitId={detailVisit?.visit_id ?? null}
+        visitId={invoiceVisit?.visit_id ?? null}
         initialLines={invoiceLines}
       />
     </div>
+  );
+}
+
+function VisitStatus({ visit, invoices }: { visit: Visit; invoices: VisitInvoice[] }) {
+  const issued = invoices.filter((i) => i.status === "created");
+  if (issued.length > 0) {
+    return (
+      <Badge className="bg-emerald-50 text-emerald-700">
+        {issued.map((i) => `${i.series_title ?? ""} ${i.series_number ?? ""}`.trim()).join(", ")}
+      </Badge>
+    );
+  }
+  return visit.completed_at ? (
+    <Badge className="bg-sky-50 text-sky-700">Užbaigtas</Badge>
+  ) : (
+    <Badge className="bg-amber-50 text-amber-700">Neužbaigtas</Badge>
   );
 }
 
@@ -856,11 +987,10 @@ function VisitRegistryFields({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      <Input
+      <DateInput
         label="Pirmųjų požymių data"
-        type="date"
         value={value.first_symptoms_date}
-        onChange={(e) => onChange({ first_symptoms_date: e.target.value })}
+        onChange={(first_symptoms_date) => onChange({ first_symptoms_date })}
       />
       <Input label="Atlikti tyrimai" value={value.tests} onChange={(e) => onChange({ tests: e.target.value })} />
       <Input

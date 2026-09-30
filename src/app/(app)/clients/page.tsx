@@ -291,7 +291,9 @@ export default function ClientsPage() {
               {filtered.map((c) => (
                 <tr key={c.id} className="hover:bg-slate-50">
                   <td className="px-5 py-3 font-medium text-slate-900">
-                    {c.name}
+                    <Link href={`/clients/${c.id}`} className="hover:text-emerald-700 hover:underline" title="Kliento kortelė: gyvūnai, vizitai, sąskaitos">
+                      {c.name}
+                    </Link>
                     {c.is_company && (
                       <Badge className="ml-2 bg-indigo-50 text-indigo-700">Juridinis</Badge>
                     )}

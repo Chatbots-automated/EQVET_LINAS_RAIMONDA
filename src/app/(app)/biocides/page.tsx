@@ -3,15 +3,15 @@
 import { useEffect, useState } from "react";
 import { Droplet, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useAuth } from "@/lib/supabase/auth-context";
+import { useProfileName } from "@/lib/profile";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
-import { Input, Select, Textarea } from "@/components/ui/Field";
-import { formatDate, formatQty } from "@/lib/format";
+import { DateInput, Input, Select, Textarea } from "@/components/ui/Field";
+import { formatDate, formatQty, todayISO } from "@/lib/format";
 
 type Product = Database["public"]["Tables"]["products"]["Row"];
 type BatchRow = Database["public"]["Views"]["stock_by_batch"]["Row"];
@@ -22,7 +22,7 @@ function emptyForm(usedBy = "") {
   return {
     product_id: "",
     batch_id: "",
-    use_date: new Date().toISOString().slice(0, 10),
+    use_date: todayISO(),
     qty: "",
     unit: "" as Unit | "",
     purpose: "",
@@ -34,14 +34,13 @@ function emptyForm(usedBy = "") {
 
 export default function BiocidesPage() {
   const supabase = createClient();
-  const { user } = useAuth();
+  const defaultUsedBy = useProfileName();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [stock, setStock] = useState<StockRow[]>([]);
   const [usage, setUsage] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [defaultUsedBy, setDefaultUsedBy] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
@@ -79,17 +78,6 @@ export default function BiocidesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
-      .single()
-      .then(({ data }) => setDefaultUsedBy(data?.full_name ?? ""));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
   function openCreate() {
     setForm(emptyForm(defaultUsedBy));
     setError(null);
@@ -111,6 +99,10 @@ export default function BiocidesPage() {
       setError("Pasirinkite produktą, partiją ir įveskite kiekį.");
       return;
     }
+    if (!form.use_date) {
+      setError("Įveskite panaudojimo datą.");
+      return;
+    }
     setSaving(true);
     const { error } = await supabase.from("biocide_usage").insert({
       product_id: form.product_id,
@@ -120,7 +112,7 @@ export default function BiocidesPage() {
       unit: form.unit,
       purpose: form.purpose.trim() || null,
       work_scope: form.work_scope.trim() || null,
-      used_by_name: form.used_by_name.trim() || null,
+      used_by_name: form.used_by_name.trim() || defaultUsedBy || null,
       notes: form.notes.trim() || null,
     });
     setSaving(false);
@@ -247,12 +239,11 @@ export default function BiocidesPage() {
       >
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Input
+            <DateInput
               label="Panaudojimo data"
-              type="date"
               required
               value={form.use_date}
-              onChange={(e) => setForm({ ...form, use_date: e.target.value })}
+              onChange={(use_date) => setForm({ ...form, use_date })}
             />
             <Select
               label="Biocidinis produktas"

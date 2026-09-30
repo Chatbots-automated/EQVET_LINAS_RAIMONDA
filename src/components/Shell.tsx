@@ -14,6 +14,7 @@ import {
   Users,
   Droplet,
   Receipt,
+  Tags,
   Settings,
   LogOut,
   Menu,
@@ -22,6 +23,7 @@ import {
 import { useAuth } from "@/lib/supabase/auth-context";
 import { createClient } from "@/lib/supabase/client";
 import { ThemeProvider, useTheme } from "@/lib/theme";
+import { ProfileNameProvider } from "@/lib/profile";
 
 // Apskaita always stays gold/amber — it already complements every theme.
 const APSKAITA_TONE = { active: "bg-amber-50 text-amber-800", dot: "bg-amber-500" };
@@ -46,6 +48,7 @@ const NAV_SECTIONS = [
     items: [
       { href: "/inventory", label: "Atsargos", icon: Boxes },
       { href: "/products", label: "Produktai", icon: Package },
+      { href: "/services", label: "Paslaugos", icon: Tags },
       { href: "/reports", label: "Ataskaitos", icon: FileBarChart },
     ],
   },
@@ -108,9 +111,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider theme={theme}>
-      <ShellContent logoUrl={logoUrl} fullName={fullName}>
-        {children}
-      </ShellContent>
+      <ProfileNameProvider value={fullName ?? ""}>
+        <ShellContent logoUrl={logoUrl} fullName={fullName}>
+          {children}
+        </ShellContent>
+      </ProfileNameProvider>
     </ThemeProvider>
   );
 }

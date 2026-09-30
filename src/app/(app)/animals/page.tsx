@@ -10,7 +10,7 @@ import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { Input, Select, Textarea } from "@/components/ui/Field";
+import { DateInput, Input, Select, Textarea } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
 import { SPECIES_OPTIONS, speciesLabel } from "@/lib/labels";
 import { formatDate } from "@/lib/format";
@@ -321,11 +321,10 @@ function AnimalsPageInner() {
               onChange={(e) => setForm({ ...form, breed: e.target.value })}
             />
           </div>
-          <Input
+          <DateInput
             label="Gimimo data"
-            type="date"
             value={form.birth_date}
-            onChange={(e) => setForm({ ...form, birth_date: e.target.value })}
+            onChange={(birth_date) => setForm({ ...form, birth_date })}
           />
           <div className="flex items-end gap-1">
             <Select

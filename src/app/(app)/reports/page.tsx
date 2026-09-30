@@ -7,7 +7,8 @@ import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { DateField } from "@/components/ui/Field";
+import { formatDate, formatMoney, formatQty, toISODate, todayISO as today } from "@/lib/format";
 import { speciesLabel } from "@/lib/labels";
 import { exportToCsv, exportToPdf } from "@/lib/export";
 
@@ -36,10 +37,7 @@ const UNFILTERED_TABS: Tab[] = ["drugs"];
 
 function firstOfMonth() {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-}
-function today() {
-  return new Date().toISOString().slice(0, 10);
+  return toISODate(new Date(d.getFullYear(), d.getMonth(), 1));
 }
 
 function ageAt(birthDate: string | null, at: string) {
@@ -240,7 +238,7 @@ export default function ReportsPage() {
         };
       case "visits":
         return {
-          headers: ["Data", "Gyvūnas", "Klientas", "Priežastis", "Diagnozė", "Paslaugos", "Kaina", "Gydytojas", "Produktai"],
+          headers: ["Data", "Gyvūnas", "Klientas", "Priežastis", "Diagnozė", "Paslaugos", "Paslaugų kaina", "Vaistų kaina", "Iš viso", "Gydytojas", "Produktai"],
           rows: visits.map((v) => [
             formatDate(v.visit_date),
             v.animal_tag ?? "",
@@ -249,6 +247,8 @@ export default function ReportsPage() {
             v.diagnosis ?? "",
             v.services ?? "",
             formatMoney(v.service_price),
+            formatMoney(v.medicines_total),
+            formatMoney(v.total_price),
             v.vet_name ?? "",
             v.products_used.map((p) => `${p.product_name} ${formatQty(p.quantity, p.unit)}`).join(", "),
           ]),
@@ -313,19 +313,24 @@ export default function ReportsPage() {
         <div className="flex flex-wrap items-center gap-2">
           {dateFiltered && (
             <>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-              />
+              {/* A half-typed date is ignored — the report keeps the last valid period. */}
+              <div className="w-36">
+                <DateField
+                  value={from}
+                  onChange={(v) => v && setFrom(v)}
+                  aria-label="Nuo"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                />
+              </div>
               <span className="text-sm text-slate-400">–</span>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-              />
+              <div className="w-36">
+                <DateField
+                  value={to}
+                  onChange={(v) => v && setTo(v)}
+                  aria-label="Iki"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                />
+              </div>
             </>
           )}
           <button
@@ -568,7 +573,7 @@ export default function ReportsPage() {
                     <td className="px-5 py-3 text-slate-600">
                       {v.products_used.map((p) => `${p.product_name} (${formatQty(p.quantity, p.unit)})`).join(", ") || "—"}
                     </td>
-                    <td className="px-5 py-3 text-slate-600">{formatMoney(v.service_price)}</td>
+                    <td className="px-5 py-3 text-slate-600">{formatMoney(v.total_price)}</td>
                   </tr>
                 ))}
               </tbody>

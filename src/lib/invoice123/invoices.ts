@@ -33,7 +33,8 @@ export interface InvoiceLineInput {
 export interface CreateInvoiceInput {
   idempotencyKey: string;
   clientId: string;
-  visitId?: string | null;
+  /** Visits this invoice covers (all must belong to the client's tenant). */
+  visitIds?: string[];
   date: string;
   dateDue: string | null;
   lines: InvoiceLineInput[];
@@ -164,20 +165,24 @@ export async function createInvoice(ctx: TenantContext, input: CreateInvoiceInpu
     throw bad("Klientas dar nesusietas su Sąskaita123.");
   }
 
+  const visitIds = [...new Set(input.visitIds ?? [])];
+  if (visitIds.length > MAX_LINES || visitIds.some((id) => !UUID_RE.test(id))) throw bad("Neteisingas vizitų sąrašas.");
   let animalId: string | null = null;
-  if (input.visitId) {
-    const { data: visit, error } = await ctx.supabase
-      .from("visits").select("id, animal_id").eq("id", input.visitId).eq("user_id", ctx.tenantId).maybeSingle();
+  if (visitIds.length > 0) {
+    const { data: visits, error } = await ctx.supabase
+      .from("visits").select("id, animal_id").in("id", visitIds).eq("user_id", ctx.tenantId);
     if (error) throw error;
-    if (!visit) throw bad("Vizitas nerastas.");
-    animalId = visit.animal_id;
+    if ((visits ?? []).length !== visitIds.length) throw bad("Vizitas nerastas.");
+    // The invoice points at one animal only when every visit is about the same one.
+    const animals = new Set((visits ?? []).map((v) => v.animal_id));
+    animalId = animals.size === 1 ? [...animals][0] : null;
   }
 
   const admin = createAdminClient();
   const row = await claimInvoiceRow(ctx.tenantId, input.idempotencyKey, {
     user_id: ctx.tenantId,
     client_id: client.id,
-    visit_id: input.visitId || null,
+    visit_id: visitIds[0] ?? null,
     animal_id: animalId,
     source: "gvet",
     idempotency_key: input.idempotencyKey,
@@ -222,6 +227,18 @@ export async function createInvoice(ctx: TenantContext, input: CreateInvoiceInpu
   if (itemsError) {
     await markInvoice(ctx.tenantId, row.id, { status: "failed", sync_error: "Nepavyko išsaugoti sąskaitos eilučių." });
     throw itemsError;
+  }
+
+  // Which visits this invoice covers (replaced on a retried draft, like the lines).
+  await admin.from("sales_invoice_visits").delete().eq("invoice_id", row.id).eq("user_id", ctx.tenantId);
+  if (visitIds.length > 0) {
+    const { error: linkError } = await admin
+      .from("sales_invoice_visits")
+      .insert(visitIds.map((visit_id) => ({ invoice_id: row.id, visit_id, user_id: ctx.tenantId })));
+    if (linkError) {
+      await markInvoice(ctx.tenantId, row.id, { status: "failed", sync_error: "Nepavyko susieti sąskaitos su vizitais." });
+      throw linkError;
+    }
   }
 
   const payload = buildInvoicePayload(settings, client, lines, totalCents, input.date, input.dateDue);

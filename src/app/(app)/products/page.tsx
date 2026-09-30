@@ -65,6 +65,7 @@ export default function ProductsPage() {
       package_size: p.package_size?.toString() ?? "",
       active_substance: p.active_substance ?? "",
       registration_code: p.registration_code ?? "",
+      markup_percent: p.markup_percent?.toString() ?? "",
       notes: p.notes ?? "",
       is_active: p.is_active,
     });

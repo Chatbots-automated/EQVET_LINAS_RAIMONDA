@@ -52,6 +52,8 @@ supabase/migrations/20260927000001_invoice123_clients.sql      -- Invoice123 kli
 supabase/migrations/20260928000001_invoice123_settings.sql     -- Sąskaita123 integracija: nustatymai + užšifruoti API raktai
 supabase/migrations/20260928000002_sales_invoices.sql          -- pardavimo sąskaitos, eilutės, mokėjimai, audito žurnalas, PDF saugykla
 supabase/migrations/20260929000001_invoice123_purchases.sql     -- pirkimai (Pajamavimas) → Sąskaita123 išlaidos
+supabase/migrations/20260930000001_visit_pricing.sql            -- vizito užbaigimas: vaistų antkainis, paslaugų kainos, vardai žurnaluose
+supabase/migrations/20260930000002_service_catalog_and_invoice_visits.sql -- paslaugų sąrašas su kainomis, sąskaita keliems vizitams
 ```
 
 Naujus migracijų failus ateityje pridėsime tuo pačiu principu — vienas

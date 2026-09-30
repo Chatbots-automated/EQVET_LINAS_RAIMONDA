@@ -45,7 +45,7 @@ export async function createInvoiceAction(input: CreateInvoiceInput) {
     invoices.createInvoice(await requireTenant(), {
       idempotencyKey: String(input?.idempotencyKey ?? ""),
       clientId: String(input?.clientId ?? ""),
-      visitId: input?.visitId ? String(input.visitId) : null,
+      visitIds: Array.isArray(input?.visitIds) ? input.visitIds.map(String) : [],
       date: String(input?.date ?? ""),
       dateDue: input?.dateDue ? String(input.dateDue) : null,
       lines: Array.isArray(input?.lines)

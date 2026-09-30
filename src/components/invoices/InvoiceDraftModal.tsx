@@ -7,8 +7,11 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Field";
-import { formatMoney } from "@/lib/format";
+import { DateInput, SearchSelect } from "@/components/ui/Field";
+import { formatDate, formatMoney, todayISO as today } from "@/lib/format";
+import { findCatalogService, loadServiceCatalog, type CatalogService } from "@/lib/service-catalog";
+import { isInvoiced, loadInvoicesByVisit } from "@/lib/visit-invoices";
+import { visitInvoiceLines } from "@/lib/visit-pricing";
 import { centsToNumber, lineTotalCents, toCents, toMilli } from "@/lib/money";
 import type { ClientLinkState } from "@/lib/invoice123/clients";
 import {
@@ -21,6 +24,7 @@ import {
 
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 type SalesInvoice = Database["public"]["Tables"]["sales_invoices"]["Row"];
+type Visit = Database["public"]["Views"]["visit_history_view"]["Row"];
 type Settings = Pick<
   Database["public"]["Tables"]["invoice123_settings"]["Row"],
   "enabled" | "default_payment_term_days" | "company_vat_enabled" | "default_series_title" | "default_unit_name"
@@ -31,15 +35,36 @@ export interface DraftLine {
   quantity: string;
   unitPrice: string;
   productId?: string | null;
+  description?: string | null;
+  /** Set on lines that came from a visit picked in this modal, so unticking the visit removes them. */
+  visitId?: string;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
 function addDays(date: string, days: number) {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 const emptyLine = (): DraftLine => ({ title: "", quantity: "1", unitPrice: "" });
+
+/** Lines of a visit, tagged with it and labelled "date · animal" on the invoice. */
+function linesOfVisit(v: Visit): DraftLine[] {
+  const description = [formatDate(v.visit_date), v.animal_tag, v.animal_name].filter(Boolean).join(" · ");
+  return visitInvoiceLines(v).map((l) => ({ ...l, description, visitId: v.visit_id }));
+}
+
+/** Keeps hand-typed lines and the (possibly edited) lines of visits that stay ticked; adds / drops the rest. */
+function syncVisitLines(prev: DraftLine[], visits: Visit[], selected: string[]): DraftLine[] {
+  const manual = prev.filter((l) => !l.visitId && (l.title.trim() || l.unitPrice.trim()));
+  const fromVisits = visits
+    .filter((v) => selected.includes(v.visit_id))
+    .flatMap((v) => {
+      const kept = prev.filter((l) => l.visitId === v.visit_id);
+      return kept.length ? kept : linesOfVisit(v);
+    });
+  const next = [...fromVisits, ...manual];
+  return next.length ? next : [emptyLine()];
+}
 
 // Display-only preview. The server recomputes every amount independently.
 function previewCents(l: DraftLine): number | null {
@@ -78,6 +103,11 @@ export function InvoiceDraftModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SalesInvoice | null>(null);
+  // Without a fixed visit: the chosen client's visits that have no invoice yet.
+  const [clientVisits, setClientVisits] = useState<Visit[]>([]);
+  const [selectedVisits, setSelectedVisits] = useState<string[]>([]);
+  const [visitsLoading, setVisitsLoading] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogService[]>([]);
 
   // Fresh draft (and fresh idempotency key) every time the modal opens.
   useEffect(() => {
@@ -99,7 +129,45 @@ export function InvoiceDraftModal({
         setSettings(data ?? null);
         setDateDue(addDays(today(), data?.default_payment_term_days ?? 30));
       });
+    loadServiceCatalog(createClient()).then(setCatalog);
   }, [open, initialClientId, initialLines]);
+
+  // Client chosen (and the draft isn't already for one visit) → pull in that
+  // client's un-invoiced visits: finished ones are ticked and their services
+  // and medicines, with the prices from "Vizito užbaigimas", become the lines.
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setClientVisits([]);
+    setSelectedVisits([]);
+    setLines((prev) => syncVisitLines(prev, [], []));
+    if (!open || visitId || !clientId) return;
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    let cancelled = false;
+    setVisitsLoading(true);
+    (async () => {
+      const supabase = createClient();
+      const { data } = await supabase.from("visit_history_view").select("*").eq("client_id", clientId);
+      const visits = [...(data ?? [])].sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+      const invoiced = await loadInvoicesByVisit(supabase, visits.map((v) => v.visit_id));
+      if (cancelled) return;
+      const pending = visits.filter((v) => !isInvoiced(invoiced.get(v.visit_id)));
+      const ticked = pending.filter((v) => v.completed_at).map((v) => v.visit_id);
+      setClientVisits(pending);
+      setSelectedVisits(ticked);
+      setLines((prev) => syncVisitLines(prev, pending, ticked));
+      setVisitsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, visitId, clientId]);
+
+  function toggleVisit(id: string) {
+    const next = selectedVisits.includes(id) ? selectedVisits.filter((x) => x !== id) : [...selectedVisits, id];
+    setSelectedVisits(next);
+    setLines((prev) => syncVisitLines(prev, clientVisits, next));
+  }
 
   useEffect(() => {
     if (!open || !clientId) {
@@ -134,10 +202,16 @@ export function InvoiceDraftModal({
     const res = await createInvoiceAction({
       idempotencyKey,
       clientId,
-      visitId: visitId ?? null,
+      visitIds: visitId ? [visitId] : selectedVisits,
       date,
       dateDue: dateDue || null,
-      lines: lines.map((l) => ({ title: l.title, quantity: l.quantity, unitPrice: l.unitPrice, productId: l.productId ?? null })),
+      lines: lines.map((l) => ({
+        title: l.title,
+        description: l.description ?? null,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        productId: l.productId ?? null,
+      })),
     });
     setSubmitting(false);
     if (!res.ok) {
@@ -217,24 +291,18 @@ export function InvoiceDraftModal({
       ) : (
         <form onSubmit={submit} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Select
+            <SearchSelect
               label="Klientas"
               required
               wrapperClassName="sm:col-span-3"
+              placeholder="Ieškoti kliento pagal pavadinimą arba kodą..."
               value={clientId}
               disabled={lockClient || submitting}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">— pasirinkite —</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.company_code ? ` (${c.company_code})` : ""}
-                </option>
-              ))}
-            </Select>
-            <Input label="Data" type="date" required value={date} onChange={(e) => setDate(e.target.value)} disabled={submitting} />
-            <Input label="Apmokėti iki" type="date" value={dateDue} min={date} onChange={(e) => setDateDue(e.target.value)} disabled={submitting} />
+              onChange={setClientId}
+              options={clients.map((c) => ({ value: c.id, label: c.name, hint: c.company_code ?? undefined }))}
+            />
+            <DateInput label="Data" required value={date} onChange={setDate} disabled={submitting} />
+            <DateInput label="Apmokėti iki" value={dateDue} min={date || undefined} onChange={setDateDue} disabled={submitting} />
             <div className="text-sm">
               <div className="font-medium text-slate-700">Serija</div>
               <div className="mt-2 text-slate-600">{settings?.default_series_title ?? "—"}</div>
@@ -243,6 +311,44 @@ export function InvoiceDraftModal({
 
           {clientId && (
             <ClientLinkPanel link={link} busy={linkBusy} clientName={client?.name ?? ""} onLink={doLink} />
+          )}
+
+          {clientId && !visitId && (
+            <div className="rounded-lg border border-slate-200 p-3 text-sm">
+              <div className="mb-1.5 font-medium text-slate-700">Kliento vizitai be sąskaitos</div>
+              {visitsLoading ? (
+                <p className="text-slate-500">Kraunama...</p>
+              ) : clientVisits.length === 0 ? (
+                <p className="text-slate-500">Visi šio kliento vizitai jau išrašyti — eilutes įveskite ranka.</p>
+              ) : (
+                <div className="space-y-1">
+                  {clientVisits.map((v) => (
+                    <label key={v.visit_id} className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        className="mt-1 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        checked={selectedVisits.includes(v.visit_id)}
+                        disabled={submitting}
+                        onChange={() => toggleVisit(v.visit_id)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium text-slate-900">
+                          {formatDate(v.visit_date)} · {v.animal_tag ?? "—"}
+                        </span>
+                        <span className="ml-2 text-slate-500">
+                          {[v.services, ...v.products_used.map((p) => p.product_name)].filter(Boolean).join(", ") || "be paslaugų"}
+                        </span>
+                        {!v.completed_at && <span className="ml-2 text-xs text-amber-700">kainos dar neįvestos</span>}
+                      </span>
+                      <span className="whitespace-nowrap text-slate-700">{formatMoney(v.total_price)}</span>
+                    </label>
+                  ))}
+                  <p className="pt-1 text-xs text-slate-500">
+                    Pažymėtų vizitų paslaugos ir vaistai su kainomis įkeliami į sąskaitą automatiškai.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           <div>
@@ -256,15 +362,22 @@ export function InvoiceDraftModal({
               {lines.map((l, i) => {
                 const cents = previewCents(l);
                 const set = (patch: Partial<DraftLine>) => setLines((prev) => prev.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                // Picking a saved service from the list brings its price along.
+                const setTitle = (title: string) => {
+                  const saved = findCatalogService(catalog, title);
+                  set(saved?.price != null && !l.unitPrice.trim() ? { title, unitPrice: String(saved.price) } : { title });
+                };
                 return (
                   <div key={i} className="grid grid-cols-12 items-center gap-2">
                     <input
                       className="col-span-6 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                       placeholder="Pavadinimas"
+                      list="invoice-service-catalog"
+                      title={l.description ?? undefined}
                       value={l.title}
                       required
                       disabled={submitting}
-                      onChange={(e) => set({ title: e.target.value })}
+                      onChange={(e) => setTitle(e.target.value)}
                     />
                     <input
                       className="col-span-2 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
@@ -299,6 +412,13 @@ export function InvoiceDraftModal({
                 );
               })}
             </div>
+            <datalist id="invoice-service-catalog">
+              {catalog.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.price != null ? formatMoney(c.price) : ""}
+                </option>
+              ))}
+            </datalist>
             <Button type="button" size="sm" variant="ghost" className="mt-2" onClick={() => setLines((p) => [...p, emptyLine()])} disabled={submitting}>
               <Plus size={14} /> Pridėti eilutę
             </Button>

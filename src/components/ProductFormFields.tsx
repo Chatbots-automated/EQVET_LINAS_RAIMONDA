@@ -9,6 +9,7 @@ export interface ProductFormState {
   package_size: string;
   active_substance: string;
   registration_code: string;
+  markup_percent: string;
   notes: string;
   is_active: boolean;
 }
@@ -20,6 +21,7 @@ export const EMPTY_PRODUCT_FORM: ProductFormState = {
   package_size: "",
   active_substance: "",
   registration_code: "",
+  markup_percent: "",
   notes: "",
   is_active: true,
 };
@@ -32,6 +34,7 @@ export function productFormToPayload(form: ProductFormState) {
     package_size: form.package_size ? Number(form.package_size) : null,
     active_substance: form.active_substance.trim() || null,
     registration_code: form.registration_code.trim() || null,
+    markup_percent: form.markup_percent.trim() ? Number(form.markup_percent.replace(",", ".")) : null,
     notes: form.notes.trim() || null,
     is_active: form.is_active,
   };
@@ -95,11 +98,22 @@ export function ProductFormFields({
           onChange={(e) => onChange({ ...form, active_substance: e.target.value })}
         />
       </div>
-      <Input
-        label="Registracijos kodas"
-        value={form.registration_code}
-        onChange={(e) => onChange({ ...form, registration_code: e.target.value })}
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          label="Registracijos kodas"
+          value={form.registration_code}
+          onChange={(e) => onChange({ ...form, registration_code: e.target.value })}
+        />
+        <Input
+          label="Antkainis, %"
+          type="number"
+          step="any"
+          min="0"
+          placeholder="Pvz. 10"
+          value={form.markup_percent}
+          onChange={(e) => onChange({ ...form, markup_percent: e.target.value })}
+        />
+      </div>
       <Textarea label="Pastabos" value={form.notes} onChange={(e) => onChange({ ...form, notes: e.target.value })} />
       {showActiveToggle && (
         <label className="flex items-center gap-2 text-sm text-slate-700">

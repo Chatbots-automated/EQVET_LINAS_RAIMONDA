@@ -19,7 +19,7 @@ import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { formatDate, formatMoney, formatQty, toISODate } from "@/lib/format";
 import { STOCK_STATUS_COLORS, STOCK_STATUS_LABELS } from "@/lib/labels";
 
 type Visit = Database["public"]["Views"]["visit_history_view"]["Row"];
@@ -60,7 +60,7 @@ export default function DashboardPage() {
       const weekStart = startOfDay(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const monthStartStr = monthStart.toISOString().slice(0, 10);
+      const monthStartStr = toISODate(monthStart);
 
       const [
         { count: animals },
@@ -79,7 +79,7 @@ export default function DashboardPage() {
           .from("clients")
           .select("*", { count: "exact", head: true })
           .gte("created_at", monthStart.toISOString()),
-        supabase.from("visits").select("visit_date, service_price").gte("visit_date", monthStartStr),
+        supabase.from("visit_history_view").select("visit_date, total_price").gte("visit_date", monthStartStr),
         supabase.from("stock_by_batch").select("*"),
         supabase
           .from("batches")
@@ -92,7 +92,7 @@ export default function DashboardPage() {
       setVisitsMonth(visits.length);
       setVisitsWeek(visits.filter((v) => new Date(v.visit_date) >= weekStart).length);
       setVisitsToday(visits.filter((v) => new Date(v.visit_date) >= today).length);
-      setMonthRevenue(visits.reduce((sum, v) => sum + (v.service_price ?? 0), 0));
+      setMonthRevenue(visits.reduce((sum, v) => sum + (v.total_price ?? 0), 0));
 
       const batchRows = batches ?? [];
       const value = batchRows.reduce((sum, b) => {

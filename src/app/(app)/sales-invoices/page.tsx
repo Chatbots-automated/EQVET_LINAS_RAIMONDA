@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { InvoiceDraftModal } from "@/components/invoices/InvoiceDraftModal";
 import { PaymentModal } from "@/components/invoices/PaymentModal";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { DateField } from "@/components/ui/Field";
+import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
 import { centsToNumber, toCents } from "@/lib/money";
 import {
   INVOICE_STATUS_LABELS,
@@ -28,6 +29,20 @@ type Item = Database["public"]["Tables"]["sales_invoice_items"]["Row"];
 type Payment = Database["public"]["Tables"]["sales_invoice_payments"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
 
+type StatusFilter = "" | "unpaid" | "partial" | "paid" | "overpaid" | "overdue" | "not_issued";
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "", label: "Visos būsenos" },
+  { value: "unpaid", label: PAYMENT_STATUS_LABELS.unpaid },
+  { value: "partial", label: PAYMENT_STATUS_LABELS.partial },
+  { value: "paid", label: PAYMENT_STATUS_LABELS.paid },
+  { value: "overpaid", label: PAYMENT_STATUS_LABELS.overpaid },
+  { value: "overdue", label: "Vėluojančios" },
+  { value: "not_issued", label: "Neišrašytos / tikrintinos" },
+];
+
+const FILTER_INPUT = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500";
+
 export default function SalesInvoicesPage() {
   return (
     <Suspense fallback={null}>
@@ -38,7 +53,13 @@ export default function SalesInvoicesPage() {
 
 function SalesInvoicesInner() {
   const supabase = createClient();
-  const clientFilter = useSearchParams().get("client");
+  const [clientFilter, setClientFilter] = useState(useSearchParams().get("client") ?? "");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [itemFilter, setItemFilter] = useState("");
+  // invoice id → titles of its lines (services / products), for filtering by what was sold.
+  const [itemTitles, setItemTitles] = useState<Map<string, string[]>>(new Map());
 
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [clients, setClients] = useState<ClientRow[]>([]);
@@ -53,11 +74,16 @@ function SalesInvoicesInner() {
 
   async function load() {
     setLoading(true);
-    let q = supabase.from("sales_invoices").select("*").order("date", { ascending: false }).order("series_number", { ascending: false });
-    if (clientFilter) q = q.eq("client_id", clientFilter);
-    const [{ data: inv }, { data: cl }] = await Promise.all([q, supabase.from("clients").select("*").order("name")]);
+    const [{ data: inv }, { data: cl }, { data: items }] = await Promise.all([
+      supabase.from("sales_invoices").select("*").order("date", { ascending: false }).order("series_number", { ascending: false }),
+      supabase.from("clients").select("*").order("name"),
+      supabase.from("sales_invoice_items").select("invoice_id, title").order("created_at", { ascending: false }).limit(10000),
+    ]);
     setInvoices(inv ?? []);
     setClients(cl ?? []);
+    const titles = new Map<string, string[]>();
+    for (const it of items ?? []) titles.set(it.invoice_id, [...(titles.get(it.invoice_id) ?? []), it.title]);
+    setItemTitles(titles);
     setLoading(false);
   }
 
@@ -65,7 +91,7 @@ function SalesInvoicesInner() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientFilter]);
+  }, []);
 
   // Mirror Invoice123 automatically every time the page is opened
   // (new / paid / deleted there) — the button is only for a manual refresh.
@@ -106,13 +132,34 @@ function SalesInvoicesInner() {
 
   const clientName = clients.find((c) => c.id === clientFilter)?.name;
   const q = search.trim().toLowerCase();
-  const filtered = useMemo(
-    () =>
-      invoices.filter((i) =>
-        !q ? true : [i.client_name, `${i.series_title ?? ""} ${i.series_number ?? ""}`, i.client_code].some((v) => v?.toLowerCase().includes(q))
-      ),
-    [invoices, q]
+  const itemQ = itemFilter.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    const today = todayISO();
+    return invoices.filter((i) => {
+      if (clientFilter && i.client_id !== clientFilter) return false;
+      if (dateFrom && i.date < dateFrom) return false;
+      if (dateTo && i.date > dateTo) return false;
+      if (statusFilter === "not_issued" && i.status === "created") return false;
+      if (statusFilter && statusFilter !== "not_issued") {
+        if (i.status !== "created") return false;
+        if (statusFilter === "overdue") {
+          if (!i.date_due || i.date_due >= today || i.payment_status === "paid" || i.payment_status === "overpaid") return false;
+        } else if (i.payment_status !== statusFilter) return false;
+      }
+      if (itemQ && !(itemTitles.get(i.id) ?? []).some((t) => t.toLowerCase().includes(itemQ))) return false;
+      if (!q) return true;
+      return [i.client_name, `${i.series_title ?? ""} ${i.series_number ?? ""}`, i.client_code].some((v) => v?.toLowerCase().includes(q));
+    });
+  }, [invoices, q, itemQ, itemTitles, clientFilter, dateFrom, dateTo, statusFilter]);
+
+  const allTitles = useMemo(
+    () => [...new Set([...itemTitles.values()].flat())].sort((a, b) => a.localeCompare(b, "lt")),
+    [itemTitles]
   );
+  const issued = filtered.filter((i) => i.status === "created");
+  const sumCents = issued.reduce((s, i) => s + (toCents(i.total) ?? 0), 0);
+  const paidCents = issued.reduce((s, i) => s + (toCents(i.paid_total) ?? 0), 0);
+  const anyFilter = !!(search || itemFilter || clientFilter || dateFrom || dateTo || statusFilter);
 
   return (
     <div>
@@ -138,26 +185,84 @@ function SalesInvoicesInner() {
         </p>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           placeholder="Ieškoti pagal numerį, klientą, kodą..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+          className={`w-full max-w-xs ${FILTER_INPUT}`}
         />
-        {clientFilter && (
-          <Link href="/sales-invoices" className="text-sm text-slate-500 hover:text-slate-700">
-            Rodyti visas ×
-          </Link>
+        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} className={`max-w-56 ${FILTER_INPUT}`} aria-label="Klientas">
+          <option value="">Visi klientai</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <input
+          list="invoice-item-titles"
+          placeholder="Paslauga / prekė"
+          value={itemFilter}
+          onChange={(e) => setItemFilter(e.target.value)}
+          className={`w-48 ${FILTER_INPUT}`}
+          aria-label="Paslauga / prekė"
+        />
+        <datalist id="invoice-item-titles">
+          {allTitles.map((t) => (
+            <option key={t} value={t} />
+          ))}
+        </datalist>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={FILTER_INPUT} aria-label="Būsena">
+          {STATUS_FILTERS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <div className="w-36">
+          <DateField value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} className={`w-full ${FILTER_INPUT}`} aria-label="Nuo" />
+        </div>
+        <span className="text-sm text-slate-400">–</span>
+        <div className="w-36">
+          <DateField value={dateTo} onChange={setDateTo} min={dateFrom || undefined} className={`w-full ${FILTER_INPUT}`} aria-label="Iki" />
+        </div>
+        {anyFilter && (
+          <button
+            onClick={() => {
+              setSearch("");
+              setItemFilter("");
+              setClientFilter("");
+              setDateFrom("");
+              setDateTo("");
+              setStatusFilter("");
+            }}
+            className="text-sm text-slate-500 hover:text-slate-700"
+          >
+            Išvalyti ×
+          </button>
         )}
       </div>
+
+      {!loading && filtered.length > 0 && (
+        <p className="mb-3 text-sm text-slate-600">
+          {filtered.length} sąsk. · suma <span className="font-semibold text-slate-900">{formatMoney(centsToNumber(sumCents))}</span> · apmokėta{" "}
+          <span className="font-semibold text-slate-900">{formatMoney(centsToNumber(paidCents))}</span> · likutis{" "}
+          <span className="font-semibold text-slate-900">{formatMoney(centsToNumber(Math.max(0, sumCents - paidCents)))}</span>
+          {clientFilter && (
+            <Link href={`/clients/${clientFilter}`} className="ml-3 font-medium text-emerald-700 hover:underline">
+              Kliento kortelė →
+            </Link>
+          )}
+        </p>
+      )}
 
       <Card className="overflow-hidden p-0">
         {loading ? (
           <div className="p-5 text-sm text-slate-500">Kraunama...</div>
         ) : filtered.length === 0 ? (
           <div className="p-5">
-            <EmptyState message="Sąskaitų dar nėra. Išrašykite naują arba atnaujinkite iš Sąskaita123." />
+            <EmptyState message={anyFilter ? "Pagal pasirinktus filtrus sąskaitų nerasta." : "Sąskaitų dar nėra. Išrašykite naują arba atnaujinkite iš Sąskaita123."} />
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -236,7 +341,7 @@ function SalesInvoicesInner() {
           load();
         }}
         clients={clients}
-        initialClientId={clientFilter}
+        initialClientId={clientFilter || null}
       />
 
       <PaymentModal
@@ -302,6 +407,21 @@ function InvoiceDetailModal({ invoice, onClose }: { invoice: SalesInvoice | null
             <Field label="Likutis">{formatMoney(centsToNumber(Math.max(0, (toCents(invoice.total) ?? 0) - (toCents(invoice.paid_total) ?? 0))))}</Field>
             <Field label="Šaltinis">{invoice.source === "gvet" ? "EQ VET" : "Importuota iš Sąskaita123"}</Field>
           </dl>
+
+          {(invoice.client_id || invoice.visit_id) && (
+            <div className="flex flex-wrap gap-4 text-sm">
+              {invoice.visit_id && (
+                <Link href={`/visits?visit=${invoice.visit_id}`} className="font-medium text-emerald-700 hover:underline">
+                  Atidaryti vizitą →
+                </Link>
+              )}
+              {invoice.client_id && (
+                <Link href={`/clients/${invoice.client_id}`} className="font-medium text-emerald-700 hover:underline">
+                  Kliento kortelė →
+                </Link>
+              )}
+            </div>
+          )}
 
           <table className="w-full">
             <thead className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500">

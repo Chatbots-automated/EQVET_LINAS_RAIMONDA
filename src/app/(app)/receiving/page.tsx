@@ -8,9 +8,9 @@ import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { Input, Select } from "@/components/ui/Field";
+import { DateField, DateInput, Input, Select } from "@/components/ui/Field";
 import { UNIT_LABELS } from "@/lib/labels";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
 import { EMPTY_PRODUCT_FORM, ProductFormFields, productFormToPayload } from "@/components/ProductFormFields";
 import { PurchaseDocumentsCard } from "@/components/purchases/PurchaseDocumentsCard";
 import { centsToNumber, toCents } from "@/lib/money";
@@ -84,7 +84,7 @@ const EMPTY_MANUAL_FORM = {
   mfg_date: "",
   expiry_date: "",
   doc_number: "",
-  doc_date: new Date().toISOString().slice(0, 10),
+  doc_date: todayISO(),
   purchase_price: "",
   package_count: "",
   received_qty: "",
@@ -289,7 +289,7 @@ export default function ReceivingPage() {
       return;
     }
 
-    setManualForm(EMPTY_MANUAL_FORM);
+    setManualForm({ ...EMPTY_MANUAL_FORM, doc_date: todayISO() });
     loadLog();
     if (purchaseId) purchaseSaved(purchaseId);
   }
@@ -745,10 +745,10 @@ export default function ReceivingPage() {
                         </div>
                         <div>
                           <label className="text-xs text-slate-500">Galiojimas</label>
-                          <input
-                            type="date"
+                          <DateField
                             value={row.expiry_date}
-                            onChange={(e) => updateRow(i, { expiry_date: e.target.value })}
+                            onChange={(expiry_date) => updateRow(i, { expiry_date })}
+                            aria-label="Galiojimas"
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
@@ -888,31 +888,28 @@ export default function ReceivingPage() {
                 value={manualForm.lot}
                 onChange={(e) => setManualForm({ ...manualForm, lot: e.target.value })}
               />
-              <Input
+              <DateInput
                 label="Galiojimo data"
-                type="date"
                 value={manualForm.expiry_date}
-                onChange={(e) => setManualForm({ ...manualForm, expiry_date: e.target.value })}
+                onChange={(expiry_date) => setManualForm({ ...manualForm, expiry_date })}
               />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <Input
+              <DateInput
                 label="Pagaminimo data"
-                type="date"
                 value={manualForm.mfg_date}
-                onChange={(e) => setManualForm({ ...manualForm, mfg_date: e.target.value })}
+                onChange={(mfg_date) => setManualForm({ ...manualForm, mfg_date })}
               />
               <Input
                 label="Dokumento Nr."
                 value={manualForm.doc_number}
                 onChange={(e) => setManualForm({ ...manualForm, doc_number: e.target.value })}
               />
-              <Input
+              <DateInput
                 label="Dokumento data"
-                type="date"
                 value={manualForm.doc_date}
-                onChange={(e) => setManualForm({ ...manualForm, doc_date: e.target.value })}
+                onChange={(doc_date) => setManualForm({ ...manualForm, doc_date })}
               />
             </div>
 
