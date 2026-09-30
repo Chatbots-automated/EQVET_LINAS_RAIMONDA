@@ -15,6 +15,7 @@ import {
   Droplet,
   Receipt,
   Tags,
+  Trash2,
   Settings,
   LogOut,
   Menu,
@@ -39,6 +40,7 @@ const NAV_SECTIONS = [
       { href: "/animals", label: "Gyvūnai", icon: PawPrint },
       { href: "/visits", label: "Vizitai", icon: Stethoscope },
       { href: "/biocides", label: "Biocidai", icon: Droplet },
+      { href: "/medical-waste", label: "Atliekos", icon: Trash2 },
     ],
   },
   {

@@ -54,6 +54,14 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
     });
   }, []);
 
+  // A document registered only for Sąskaita123 and never sent holds nothing else — it can simply be removed.
+  async function remove(p: Purchase) {
+    if (!confirm(`Pašalinti dokumentą ${p.supplier_name ?? ""} ${p.invoice_number ?? ""}? Jis dar neišsiųstas į Sąskaita123.`)) return;
+    const { error } = await createClient().from("invoices").delete().eq("id", p.id);
+    if (error) setNotice(`Nepavyko pašalinti: ${error.message}`);
+    load();
+  }
+
   async function reconcile(p: Purchase) {
     const res = await reconcilePurchaseAction(p.id);
     setNotice(res.ok ? (res.data.purchase.invoice123_sync_status === "sent" ? "Pirkimas rastas Sąskaita123." : res.data.purchase.invoice123_sync_error) : res.error);
@@ -82,7 +90,12 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
               {rows.map((p) => (
                 <tr key={p.id}>
                   <td className="px-5 py-2">{p.supplier_name ?? "—"}</td>
-                  <td className="px-5 py-2">{p.invoice_number ?? "—"}</td>
+                  <td className="px-5 py-2">
+                    {p.invoice_number ?? "—"}
+                    {p.saved_to_gvet === false && (
+                      <Badge className="ml-2 bg-sky-50 text-sky-700">Tik Sąskaita123 — nepajamuota</Badge>
+                    )}
+                  </td>
                   <td className="px-5 py-2">{formatDate(p.invoice_date)}</td>
                   <td className="px-5 py-2 text-right">{formatMoney(p.total_gross)}</td>
                   <td className="px-5 py-2">
@@ -94,6 +107,11 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
                     {(p.invoice123_sync_status === "not_sent" || p.invoice123_sync_status === "failed") && (
                       <Button size="sm" variant="secondary" onClick={() => setSendFor(p)}>
                         {p.invoice123_sync_status === "failed" ? "Bandyti dar kartą" : "Siųsti"}
+                      </Button>
+                    )}
+                    {p.saved_to_gvet === false && (p.invoice123_sync_status === "not_sent" || p.invoice123_sync_status === "failed") && (
+                      <Button size="sm" variant="ghost" className="ml-1" onClick={() => remove(p)}>
+                        Pašalinti
                       </Button>
                     )}
                     {(p.invoice123_sync_status === "needs_reconcile" || p.invoice123_sync_status === "sending") && (

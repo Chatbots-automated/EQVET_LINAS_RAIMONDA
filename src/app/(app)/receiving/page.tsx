@@ -79,6 +79,8 @@ interface ReviewRow {
 
 const EMPTY_MANUAL_FORM = {
   product_id: "",
+  // Only used when the purchase is NOT saved to GVET: free-text line title for Sąskaita123.
+  item_title: "",
   supplier_id: "",
   lot: "",
   mfg_date: "",
@@ -139,6 +141,11 @@ export default function ReceivingPage() {
   const [invoice123Enabled, setInvoice123Enabled] = useState(false);
   const [purchasesReloadKey, setPurchasesReloadKey] = useState(0);
   const [openPurchaseId, setOpenPurchaseId] = useState<string | null>(null);
+  // Checked: the purchase goes to GVET (stock + journals) AND can be sent to
+  // Sąskaita123. Unchecked: it is registered only for Sąskaita123 — no
+  // batches are created, so nothing reaches stock or the journals.
+  const [saveToGvetChoice, setSaveToGvet] = useState(true);
+  const saveToGvet = saveToGvetChoice || !invoice123Enabled;
 
   function purchaseSaved(purchaseId: string) {
     setPurchasesReloadKey((k) => k + 1);
@@ -207,6 +214,8 @@ export default function ReceivingPage() {
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
     setManualError(null);
+
+    if (!saveToGvet) return submitInvoice123OnlyPurchase();
 
     const product = products.find((p) => p.id === manualForm.product_id);
     if (!product) {
@@ -292,6 +301,58 @@ export default function ReceivingPage() {
     setManualForm({ ...EMPTY_MANUAL_FORM, doc_date: todayISO() });
     loadLog();
     if (purchaseId) purchaseSaved(purchaseId);
+  }
+
+  /** Manual entry with "Išsaugoti GVET" unchecked: a purchase document for Sąskaita123 only. */
+  async function submitInvoice123OnlyPurchase() {
+    const supplier = suppliers.find((s) => s.id === manualForm.supplier_id);
+    const netCents = toCents(manualForm.purchase_price);
+    const vatRate = Number(manualForm.vat_rate);
+    const qty = Number(manualForm.received_qty);
+    if (!manualForm.item_title.trim()) return setManualError("Įveskite prekės ar paslaugos pavadinimą.");
+    if (!supplier) return setManualError("Nurodykite tiekėją.");
+    if (!manualForm.doc_number.trim() || !manualForm.doc_date) return setManualError("Nurodykite dokumento Nr. ir datą.");
+    if (!(qty > 0)) return setManualError("Įveskite kiekį.");
+    if (netCents === null || netCents <= 0) return setManualError("Nurodykite kainą (viso, be PVM).");
+    if (!Number.isInteger(vatRate) || vatRate < 0 || vatRate > 100) return setManualError("PVM tarifas turi būti sveikas skaičius, pvz. 21.");
+
+    setManualSaving(true);
+    const vatCents = Math.floor((netCents * vatRate + 50) / 100);
+    const { data: purchase, error: purchaseError } = await supabase
+      .from("invoices")
+      .insert({
+        invoice_number: manualForm.doc_number.trim(),
+        invoice_date: manualForm.doc_date,
+        supplier_id: supplier.id,
+        supplier_name: supplier.name,
+        supplier_code: supplier.code,
+        supplier_vat: supplier.vat_code,
+        currency: "EUR",
+        total_net: centsToNumber(netCents),
+        total_vat: centsToNumber(vatCents),
+        total_gross: centsToNumber(netCents + vatCents),
+        saved_to_gvet: false,
+      })
+      .select("id")
+      .single();
+    if (purchaseError) {
+      setManualSaving(false);
+      return setManualError(purchaseError.message);
+    }
+    const { error: itemError } = await supabase.from("invoice_items").insert({
+      invoice_id: purchase.id,
+      description: manualForm.item_title.trim(),
+      quantity: qty,
+      total_price: centsToNumber(netCents),
+      vat_rate: vatRate,
+    });
+    setManualSaving(false);
+    if (itemError) {
+      await supabase.from("invoices").delete().eq("id", purchase.id);
+      return setManualError(itemError.message);
+    }
+    setManualForm({ ...EMPTY_MANUAL_FORM, doc_date: todayISO() });
+    purchaseSaved(purchase.id);
   }
 
   // ---------------- pdf upload ----------------
@@ -381,7 +442,7 @@ export default function ReceivingPage() {
       setConfirmError("Pažymėkite bent vieną prekę.");
       return;
     }
-    if (included.some((r) => !r.product_id)) {
+    if (saveToGvet && included.some((r) => !r.product_id)) {
       setConfirmError("Kiekvienai pažymėtai prekei būtina priskirti produktą.");
       return;
     }
@@ -397,7 +458,7 @@ export default function ReceivingPage() {
       );
       if (existingSupplier) {
         supplierId = existingSupplier.id;
-      } else if (webhookData.supplier?.name) {
+      } else if (webhookData.supplier?.name && saveToGvet) {
         const { data: newSupplier, error } = await supabase
           .from("suppliers")
           .insert({
@@ -428,10 +489,33 @@ export default function ReceivingPage() {
           total_vat: webhookData.invoice.total_vat ?? null,
           total_gross: webhookData.invoice.total_gross ?? null,
           pdf_filename: file?.name || null,
+          saved_to_gvet: saveToGvet,
         })
         .select()
         .single();
       if (invoiceError) throw invoiceError;
+
+      // Only for Sąskaita123: keep the document lines, create no batches —
+      // nothing reaches stock or the journals.
+      if (!saveToGvet) {
+        const { error: itemsError } = await supabase.from("invoice_items").insert(
+          included.map((row) => ({
+            invoice_id: invoice.id,
+            description: row.description,
+            quantity: Number(row.quantity) || 0,
+            unit_price: row.unit_price ? Number(row.unit_price) : null,
+            total_price: row.net ? Number(row.net) : null,
+            vat_rate: row.vat_rate !== "" && Number.isFinite(Number(row.vat_rate)) ? Number(row.vat_rate) : null,
+          }))
+        );
+        if (itemsError) {
+          await supabase.from("invoices").delete().eq("id", invoice.id);
+          throw itemsError;
+        }
+        resetPdfImport();
+        purchaseSaved(invoice.id);
+        return;
+      }
 
       // 3. create a batch + invoice_item per included row
       for (const row of included) {
@@ -575,6 +659,29 @@ export default function ReceivingPage() {
         </button>
       </div>
 
+      {invoice123Enabled && (
+        <label
+          className={`mb-4 flex max-w-3xl cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${
+            saveToGvet ? "border-emerald-200 bg-emerald-50/50" : "border-sky-200 bg-sky-50/60"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={saveToGvet}
+            onChange={(e) => setSaveToGvet(e.target.checked)}
+            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+          />
+          <span>
+            <span className="font-medium text-slate-900">Išsaugoti GVET (atsargos ir žurnalai)</span>
+            <span className="mt-0.5 block text-slate-600">
+              {saveToGvet
+                ? "Sąskaita ir prekės pajamuojamos į GVET (atsargos, žurnalai) ir gali būti siunčiamos į Sąskaita123."
+                : "Tik Sąskaita123: dokumentas nepajamuojamas — prekės nepatenka nei į atsargas, nei į žurnalus."}
+            </span>
+          </span>
+        </label>
+      )}
+
       {mode === "pdf" && (
         <div className={showSplitLayout ? "mb-6 flex flex-col gap-6 lg:flex-row" : "mb-6"}>
           {showSplitLayout && (
@@ -660,7 +767,7 @@ export default function ReceivingPage() {
 
                 <div className="space-y-3">
                   {reviewRows.map((row, i) => {
-                    const matched = !!row.product_id;
+                    const matched = !saveToGvet || !!row.product_id;
                     return (
                     <div
                       key={i}
@@ -680,7 +787,7 @@ export default function ReceivingPage() {
                         </label>
                         <div className="flex items-center gap-2">
                           {row.sku && <span className="text-xs text-slate-400">SKU: {row.sku}</span>}
-                          {matched ? (
+                          {!saveToGvet ? null : matched ? (
                             <span className="flex items-center gap-1 text-xs font-medium text-emerald-700">
                               <CheckCircle2 size={13} /> Rasta atitiktis
                             </span>
@@ -692,7 +799,7 @@ export default function ReceivingPage() {
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                        <div className="col-span-2">
+                        <div className={saveToGvet ? "col-span-2" : "hidden"}>
                           <label className="text-xs text-slate-500">Produktas</label>
                           <div className="mt-1 flex gap-1">
                             <select
@@ -743,7 +850,7 @@ export default function ReceivingPage() {
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
-                        <div>
+                        <div className={saveToGvet ? "" : "hidden"}>
                           <label className="text-xs text-slate-500">Galiojimas</label>
                           <DateField
                             value={row.expiry_date}
@@ -754,7 +861,7 @@ export default function ReceivingPage() {
                         </div>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                        <div>
+                        <div className={saveToGvet ? "" : "hidden"}>
                           <label className="text-xs text-slate-500">Partija (lot)</label>
                           <input
                             type="text"
@@ -788,7 +895,7 @@ export default function ReceivingPage() {
                     Atšaukti
                   </Button>
                   <Button onClick={handleConfirmImport} disabled={confirming}>
-                    <Save size={16} /> {confirming ? "Importuojama..." : "Patvirtinti pajamavimą"}
+                    <Save size={16} /> {confirming ? "Importuojama..." : saveToGvet ? "Patvirtinti pajamavimą" : "Registruoti tik Sąskaita123"}
                   </Button>
                 </div>
               </div>
@@ -801,10 +908,19 @@ export default function ReceivingPage() {
         <Card className="mb-6">
           <form onSubmit={handleManualSubmit} className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex items-end gap-1">
+              {!saveToGvet && (
+                <Input
+                  label="Prekė / paslauga"
+                  required
+                  placeholder="Kaip bus įrašyta Sąskaita123"
+                  value={manualForm.item_title}
+                  onChange={(e) => setManualForm({ ...manualForm, item_title: e.target.value })}
+                />
+              )}
+              <div className={saveToGvet ? "flex items-end gap-1" : "hidden"}>
                 <Select
                   label="Produktas"
-                  required
+                  required={saveToGvet}
                   wrapperClassName="flex-1"
                   value={manualForm.product_id}
                   onChange={(e) => setManualForm({ ...manualForm, product_id: e.target.value })}
@@ -840,7 +956,7 @@ export default function ReceivingPage() {
               </div>
             </div>
 
-            {selectedManualProduct?.package_size ? (
+            {saveToGvet && selectedManualProduct?.package_size ? (
               <p className="text-xs text-slate-500">
                 Pakuotės dydis: {formatQty(selectedManualProduct.package_size, selectedManualProduct.unit)}
               </p>
@@ -849,13 +965,14 @@ export default function ReceivingPage() {
             <div className="grid gap-3 sm:grid-cols-4">
               <Input
                 label="Kiek pakuočių"
+                wrapperClassName={saveToGvet ? "" : "hidden"}
                 type="number"
                 step="any"
                 value={manualForm.package_count}
                 onChange={(e) => handlePackageCountChange(e.target.value)}
               />
               <Input
-                label="Gautas kiekis"
+                label={saveToGvet ? "Gautas kiekis" : "Kiekis"}
                 type="number"
                 step="any"
                 required
@@ -864,6 +981,7 @@ export default function ReceivingPage() {
               />
               <Select
                 label="Vienetas"
+                wrapperClassName={saveToGvet ? "" : "hidden"}
                 value={manualForm.unit || selectedManualProduct?.unit || ""}
                 onChange={(e) => setManualForm({ ...manualForm, unit: e.target.value as Unit })}
               >
@@ -882,7 +1000,7 @@ export default function ReceivingPage() {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className={saveToGvet ? "grid gap-3 sm:grid-cols-2" : "hidden"}>
               <Input
                 label="Partijos Nr. (lot)"
                 value={manualForm.lot}
@@ -898,6 +1016,7 @@ export default function ReceivingPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               <DateInput
                 label="Pagaminimo data"
+                wrapperClassName={saveToGvet ? "" : "hidden"}
                 value={manualForm.mfg_date}
                 onChange={(mfg_date) => setManualForm({ ...manualForm, mfg_date })}
               />
@@ -918,13 +1037,14 @@ export default function ReceivingPage() {
                 <label className="flex items-center gap-2 text-sm text-slate-700">
                   <input
                     type="checkbox"
-                    checked={manualForm.as_purchase}
+                    checked={manualForm.as_purchase || !saveToGvet}
+                    disabled={!saveToGvet}
                     onChange={(e) => setManualForm({ ...manualForm, as_purchase: e.target.checked })}
                     className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
                   />
                   Registruoti kaip pirkimą Sąskaita123 (reikia tiekėjo, dokumento Nr., datos ir kainos)
                 </label>
-                {manualForm.as_purchase && (
+                {(manualForm.as_purchase || !saveToGvet) && (
                   <Input
                     label="PVM %"
                     wrapperClassName="mt-2 max-w-32"
@@ -942,7 +1062,7 @@ export default function ReceivingPage() {
 
             <div className="flex justify-end">
               <Button type="submit" disabled={manualSaving}>
-                <Package size={16} /> {manualSaving ? "Saugoma..." : "Priimti prekę"}
+                <Package size={16} /> {manualSaving ? "Saugoma..." : saveToGvet ? "Priimti prekę" : "Registruoti tik Sąskaita123"}
               </Button>
             </div>
           </form>

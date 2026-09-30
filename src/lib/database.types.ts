@@ -86,6 +86,7 @@ export interface Database {
           category: ProductCategory;
           unit: Unit;
           package_size: number | null;
+          package_weight_g: number | null;
           active_substance: string | null;
           registration_code: string | null;
           withdrawal_days_meat: number | null;
@@ -130,6 +131,8 @@ export interface Database {
           total_vat: number | null;
           total_gross: number | null;
           pdf_filename: string | null;
+          /** False = registered only for Sąskaita123: no batches, no stock, no journals. */
+          saved_to_gvet: boolean;
           invoice123_expense_id: string | null;
           invoice123_sync_status: PurchaseSyncStatus;
           invoice123_sync_error: string | null;
@@ -275,6 +278,57 @@ export interface Database {
           title: string;
         };
         Update: Partial<Database["public"]["Tables"]["visit_services"]["Row"]>;
+        Relationships: [];
+      };
+      medical_waste: {
+        Row: {
+          id: string;
+          user_id: string;
+          waste_code: string;
+          name: string;
+          period: string | null;
+          date: string;
+          qty_generated: number | null;
+          qty_transferred: number | null;
+          carrier: string | null;
+          processor: string | null;
+          transfer_date: string | null;
+          doc_no: string | null;
+          responsible: string | null;
+          notes: string | null;
+          /** Created by the stock trigger from emptied packages (one row per batch). */
+          auto_generated: boolean;
+          source_batch_id: string | null;
+          source_product_id: string | null;
+          package_count: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["medical_waste"]["Row"]> & { waste_code: string; name: string };
+        Update: Partial<Database["public"]["Tables"]["medical_waste"]["Row"]>;
+        Relationships: [];
+      };
+      // The tenant's fixed journal columns, typed in once at the top of the waste journal.
+      medical_waste_settings: {
+        Row: {
+          user_id: string;
+          waste_code: string | null;
+          waste_name: string | null;
+          carrier: string | null;
+          processor: string | null;
+          responsible: string | null;
+          doc_no: string | null;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["medical_waste_settings"]["Row"]>;
+        Update: Partial<Database["public"]["Tables"]["medical_waste_settings"]["Row"]>;
+        Relationships: [];
+      };
+      // service_role only — throttle for the change-password form.
+      password_change_attempts: {
+        Row: { id: string; user_id: string; succeeded: boolean; created_at: string };
+        Insert: { user_id: string; succeeded: boolean };
+        Update: Partial<Database["public"]["Tables"]["password_change_attempts"]["Row"]>;
         Relationships: [];
       };
       service_catalog: {
@@ -561,6 +615,8 @@ export interface Database {
           visit_id: string | null;
           animal_id: string | null;
           animal_tag: string | null;
+          client_id: string | null;
+          client_name: string | null;
         };
         Relationships: [];
       };
@@ -633,6 +689,7 @@ export interface Database {
           outcome: string | null;
           veterinarian: string | null;
           notes: string | null;
+          product_ids: string[];
         };
         Relationships: [];
       };
@@ -704,6 +761,8 @@ export interface Database {
           notes: string | null;
           quantity_remaining: number;
           created_at: string;
+          animal_id: string | null;
+          client_id: string | null;
         };
         Relationships: [];
       };

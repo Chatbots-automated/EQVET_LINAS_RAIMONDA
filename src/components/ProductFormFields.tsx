@@ -7,6 +7,8 @@ export interface ProductFormState {
   category: ProductCategory;
   unit: Unit;
   package_size: string;
+  /** Weight of one EMPTY package, in grams — drives automatic medical waste entries. */
+  package_weight_g: string;
   active_substance: string;
   registration_code: string;
   markup_percent: string;
@@ -19,6 +21,7 @@ export const EMPTY_PRODUCT_FORM: ProductFormState = {
   category: "medicines",
   unit: "ml",
   package_size: "",
+  package_weight_g: "",
   active_substance: "",
   registration_code: "",
   markup_percent: "",
@@ -32,6 +35,7 @@ export function productFormToPayload(form: ProductFormState) {
     category: form.category,
     unit: form.unit,
     package_size: form.package_size ? Number(form.package_size) : null,
+    package_weight_g: Number(form.package_weight_g.replace(",", ".")) > 0 ? Number(form.package_weight_g.replace(",", ".")) : null,
     active_substance: form.active_substance.trim() || null,
     registration_code: form.registration_code.trim() || null,
     markup_percent: form.markup_percent.trim() ? Number(form.markup_percent.replace(",", ".")) : null,
@@ -86,18 +90,31 @@ export function ProductFormFields({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Input
-          label="Pakuotės dydis"
+          label={`Pakuotės dydis (${UNIT_LABELS[form.unit]})`}
           type="number"
           step="any"
+          placeholder="Kiek telpa į vieną pakuotę"
           value={form.package_size}
           onChange={(e) => onChange({ ...form, package_size: e.target.value })}
         />
         <Input
-          label="Veiklioji medžiaga"
-          value={form.active_substance}
-          onChange={(e) => onChange({ ...form, active_substance: e.target.value })}
+          label="Tuščios pakuotės svoris, g"
+          type="number"
+          step="any"
+          min="0"
+          placeholder="Pvz. 35"
+          value={form.package_weight_g}
+          onChange={(e) => onChange({ ...form, package_weight_g: e.target.value })}
         />
       </div>
+      <p className="-mt-1 text-xs text-slate-500">
+        Užpildžius abu laukus, ištuštėjusios pakuotės pačios įsirašo į medicininių atliekų žurnalą.
+      </p>
+      <Input
+        label="Veiklioji medžiaga"
+        value={form.active_substance}
+        onChange={(e) => onChange({ ...form, active_substance: e.target.value })}
+      />
       <div className="grid grid-cols-2 gap-3">
         <Input
           label="Registracijos kodas"

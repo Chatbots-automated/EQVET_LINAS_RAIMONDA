@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import { Badge } from "@/components/ui/Badge";
 import { formatDateTime } from "@/lib/format";
+import { PasswordCard } from "@/components/settings/PasswordCard";
 import type { Invoice123Status } from "@/lib/invoice123/settings";
 import type { Invoice123RemoteOptions } from "@/lib/invoice123/types";
 import {
@@ -402,6 +403,8 @@ export default function Invoice123SettingsPage() {
           )}
         </div>
       ) : null}
+
+      <PasswordCard />
     </div>
   );
 }

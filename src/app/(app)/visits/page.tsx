@@ -79,6 +79,7 @@ function VisitsPageInner() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_VISIT_FORM);
   const [lines, setLines] = useState<UsageLine[]>([emptyLine()]);
+  const [serviceRows, setServiceRows] = useState<string[]>([""]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -214,6 +215,7 @@ function VisitsPageInner() {
   function openCreate() {
     setForm({ ...EMPTY_VISIT_FORM, visit_date: todayISO(), vet_name: profileName, animal_id: animalFilter ?? "" });
     setLines([emptyLine()]);
+    setServiceRows([""]);
     setError(null);
     setCreateOpen(true);
   }
@@ -240,7 +242,8 @@ function VisitsPageInner() {
         visit_date: form.visit_date,
         reason: form.reason.trim() || null,
         diagnosis: form.diagnosis.trim() || null,
-        services: form.services.trim() || null,
+        // One row per service; the names are split back into priced lines in "Vizito užbaigimas".
+        services: serviceRows.map((r) => r.trim().replace(/[,;]+/g, " ")).filter(Boolean).join(", ") || null,
         vet_name: form.vet_name.trim() || profileName || null,
         notes: form.notes.trim() || null,
         first_symptoms_date: form.first_symptoms_date || null,
@@ -565,46 +568,58 @@ function VisitsPageInner() {
 
           <VisitRegistryFields value={form} onChange={(patch) => setForm({ ...form, ...patch })} />
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Input
-                label="Suteiktos paslaugos"
-                placeholder="Pvz. Gydymas, apžiūra"
-                value={form.services}
-                onChange={(e) => setForm({ ...form, services: e.target.value })}
-              />
-              {catalog.length > 0 && (
-                <select
-                  value=""
-                  aria-label="Pridėti paslaugą iš sąrašo"
-                  onChange={(e) => {
-                    const name = e.target.value;
-                    if (!name) return;
-                    const current = form.services.split(",").map((s) => s.trim()).filter(Boolean);
-                    if (!current.some((s) => s.toLowerCase() === name.toLowerCase())) current.push(name);
-                    setForm({ ...form, services: current.join(", ") });
-                  }}
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600"
-                >
-                  <option value="">＋ Pridėti paslaugą iš sąrašo…</option>
-                  {catalog.map((c) => (
-                    <option key={c.id} value={c.name}>
-                      {c.name}
-                      {c.price != null ? ` — ${formatMoney(c.price)}` : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
+          <Input
+            label="Veterinarijos gydytojas"
+            value={form.vet_name}
+            onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
+          />
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">Suteiktos paslaugos</span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setServiceRows([...serviceRows, ""])}>
+                <Plus size={14} /> Pridėti paslaugą
+              </Button>
             </div>
-            <Input
-              label="Veterinarijos gydytojas"
-              value={form.vet_name}
-              onChange={(e) => setForm({ ...form, vet_name: e.target.value })}
-            />
+            <div className="space-y-2">
+              {serviceRows.map((row, i) => {
+                const saved = catalog.find((c) => c.name.toLowerCase() === row.trim().toLowerCase());
+                return (
+                  <div key={i} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2">
+                    <input
+                      list="visit-service-catalog"
+                      placeholder="Pasirinkite iš sąrašo arba įrašykite naują"
+                      aria-label={`Paslauga ${i + 1}`}
+                      value={row}
+                      onChange={(e) => setServiceRows(serviceRows.map((r, j) => (j === i ? e.target.value : r)))}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                    />
+                    {saved?.price != null && (
+                      <span className="whitespace-nowrap text-xs text-slate-500">{formatMoney(saved.price)}</span>
+                    )}
+                    <button
+                      type="button"
+                      aria-label="Pašalinti paslaugą"
+                      onClick={() => setServiceRows(serviceRows.length > 1 ? serviceRows.filter((_, j) => j !== i) : [""])}
+                      className="flex justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <datalist id="visit-service-catalog">
+              {catalog.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.price != null ? formatMoney(c.price) : ""}
+                </option>
+              ))}
+            </datalist>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Kainos įvedamos išsaugojus vizitą — atsidarys „Vizito užbaigimas“; išsaugotų paslaugų kainos įsirašys pačios.
+            </p>
           </div>
-          <p className="-mt-2 text-xs text-slate-500">
-            Kelias paslaugas atskirkite kableliu. Kainos įvedamos išsaugojus vizitą — atsidarys „Vizito užbaigimas“; išsaugotų paslaugų kainos įsirašys pačios.
-          </p>
 
           <div>
             <div className="mb-2 flex items-center justify-between">

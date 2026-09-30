@@ -54,6 +54,7 @@ supabase/migrations/20260928000002_sales_invoices.sql          -- pardavimo sąs
 supabase/migrations/20260929000001_invoice123_purchases.sql     -- pirkimai (Pajamavimas) → Sąskaita123 išlaidos
 supabase/migrations/20260930000001_visit_pricing.sql            -- vizito užbaigimas: vaistų antkainis, paslaugų kainos, vardai žurnaluose
 supabase/migrations/20260930000002_service_catalog_and_invoice_visits.sql -- paslaugų sąrašas su kainomis, sąskaita keliems vizitams
+supabase/migrations/20260930000003_journals_waste_password.sql -- medicininių atliekų žurnalas (automatinis iš tuščių pakuočių), žurnalų filtrai, pirkimas tik Sąskaita123, slaptažodžio keitimas
 ```
 
 Naujus migracijų failus ateityje pridėsime tuo pačiu principu — vienas
