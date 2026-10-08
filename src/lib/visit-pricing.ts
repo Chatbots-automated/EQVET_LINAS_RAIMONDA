@@ -47,8 +47,12 @@ export function visitInvoiceLines(visit: Visit): DraftLine[] {
     unitPrice: s.price != null ? centsToString(toCents(s.price) ?? 0) : "",
   }));
 
+  const hasPricedService = lines.some((l) => (toCents(l.unitPrice) ?? 0) > 0);
+
   for (const p of visit.products_used) {
     const saleCents = toCents(p.sale_total);
+    // Priced 0 next to a priced service = included in it (e.g. a herd price): no line of its own.
+    if (saleCents === 0 && hasPricedService) continue;
     const qtyMilli = toMilli(p.quantity);
     if (saleCents === null) {
       lines.push({ title: p.product_name, quantity: String(p.quantity), unitPrice: "", productId: p.product_id });

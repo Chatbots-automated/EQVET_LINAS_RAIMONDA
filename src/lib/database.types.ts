@@ -203,6 +203,8 @@ export interface Database {
           breed: string | null;
           birth_date: string | null;
           client_id: string | null;
+          /** Bandos numeris (free text; a client can have many herds). */
+          herd_no: string | null;
           active: boolean;
           notes: string | null;
           created_at: string;
@@ -771,6 +773,21 @@ export interface Database {
       fn_fifo_batch: {
         Args: { p_product_id: string };
         Returns: string | null;
+      };
+      create_mass_treatment: {
+        Args: {
+          p_animal_ids: string[];
+          p_visit_date: string;
+          p_vet_name: string | null;
+          p_reason: string | null;
+          p_diagnosis: string | null;
+          p_notes: string | null;
+          p_items: { product_id: string; batch_id: string | null; qty: number }[];
+          /** Price of the WHOLE herd (split over the animals' visits); null = not priced. */
+          p_herd_price?: number | null;
+          p_price_title?: string | null;
+        };
+        Returns: { visits: number; usage_rows: number };
       };
       delete_purchase_document: {
         Args: { p_invoice_id: string };

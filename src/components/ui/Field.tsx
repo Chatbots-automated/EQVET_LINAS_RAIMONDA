@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { Calendar, Search, X } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { dateTextToISO, isoToDateText } from "@/lib/format";
@@ -236,6 +236,8 @@ export interface SearchOption {
   label: string;
   /** Extra text shown smaller and also searched (e.g. the animal's owner). */
   hint?: string;
+  /** Options sharing a group are listed under a header; pass them already ordered by group. */
+  group?: string;
 }
 
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -282,7 +284,7 @@ export function SearchSelect({
   }, [problem]);
 
   useEffect(() => {
-    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelector(`[data-idx="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
   function pick(option: SearchOption) {
@@ -364,17 +366,24 @@ export function SearchSelect({
               <li className="px-3 py-2 text-slate-500">Nieko nerasta</li>
             ) : (
               matches.map((o, i) => (
-                <li
-                  key={o.value}
-                  role="option"
-                  aria-selected={o.value === value}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => pick(o)}
-                  className={`cursor-pointer px-3 py-1.5 ${i === active ? "bg-slate-100" : ""} ${o.value === value ? "font-medium text-slate-900" : "text-slate-700"}`}
-                >
-                  {o.label}
-                  {o.hint && <span className="ml-2 text-xs text-slate-500">{o.hint}</span>}
-                </li>
+                <Fragment key={o.value}>
+                  {o.group && o.group !== matches[i - 1]?.group && (
+                    <li role="presentation" className="sticky top-0 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {o.group}
+                    </li>
+                  )}
+                  <li
+                    role="option"
+                    data-idx={i}
+                    aria-selected={o.value === value}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => pick(o)}
+                    className={`cursor-pointer px-3 py-1.5 ${i === active ? "bg-slate-100" : ""} ${o.value === value ? "font-medium text-slate-900" : "text-slate-700"}`}
+                  >
+                    {o.label}
+                    {o.hint && <span className="ml-2 text-xs text-slate-500">{o.hint}</span>}
+                  </li>
+                </Fragment>
               ))
             )}
           </ul>

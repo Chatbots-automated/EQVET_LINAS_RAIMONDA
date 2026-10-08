@@ -26,6 +26,7 @@ const EMPTY_FORM = {
   breed: "",
   birth_date: "",
   client_id: "",
+  herd_no: "",
   notes: "",
   active: true,
 };
@@ -97,6 +98,7 @@ function AnimalsPageInner() {
       breed: a.breed ?? "",
       birth_date: a.birth_date ?? "",
       client_id: a.client_id ?? "",
+      herd_no: a.herd_no ?? "",
       notes: a.notes ?? "",
       active: a.active,
     });
@@ -117,6 +119,7 @@ function AnimalsPageInner() {
       breed: form.breed.trim() || null,
       birth_date: form.birth_date || null,
       client_id: form.client_id || null,
+      herd_no: form.herd_no.trim() || null,
       notes: form.notes.trim() || null,
       active: form.active,
     };
@@ -171,8 +174,20 @@ function AnimalsPageInner() {
   const filtered = byClient.filter(
     (a) =>
       a.tag_no.toLowerCase().includes(search.toLowerCase()) ||
-      (clientName(a.client_id) ?? "").toLowerCase().includes(search.toLowerCase())
+      (clientName(a.client_id) ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (a.herd_no ?? "").toLowerCase().includes(search.toLowerCase())
   );
+
+  // Herd numbers already used under the chosen client (all clients while none is chosen),
+  // offered as suggestions so the same herd is always typed the same way.
+  const herdSuggestions = Array.from(
+    new Set(
+      animals
+        .filter((a) => !form.client_id || a.client_id === form.client_id)
+        .map((a) => a.herd_no?.trim())
+        .filter((h): h is string => !!h)
+    )
+  ).sort((a, b) => a.localeCompare(b, "lt", { numeric: true }));
 
 
   const filterClient = clients.find((c) => c.id === clientFilter);
@@ -199,7 +214,7 @@ function AnimalsPageInner() {
 
       <div className="mb-4">
         <input
-          placeholder="Ieškoti pagal numerį ar klientą..."
+          placeholder="Ieškoti pagal numerį, klientą ar bandą..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
@@ -223,6 +238,7 @@ function AnimalsPageInner() {
                 <th className="px-5 py-3">Veislė</th>
                 <th className="px-5 py-3">Gimimo data</th>
                 <th className="px-5 py-3">Klientas</th>
+                <th className="px-5 py-3">Banda</th>
                 <th className="px-5 py-3">Būsena</th>
                 <th className="px-5 py-3" />
               </tr>
@@ -238,6 +254,7 @@ function AnimalsPageInner() {
                   <td className="px-5 py-3 text-slate-600">{a.breed ?? "—"}</td>
                   <td className="px-5 py-3 text-slate-600">{formatDate(a.birth_date)}</td>
                   <td className="px-5 py-3 text-slate-600">{clientName(a.client_id) ?? "—"}</td>
+                  <td className="px-5 py-3 text-slate-600">{a.herd_no ?? "—"}</td>
                   <td className="px-5 py-3">
                     {a.active ? (
                       <Badge className="bg-emerald-50 text-emerald-700">Aktyvus</Badge>
@@ -344,6 +361,19 @@ function AnimalsPageInner() {
               <Plus size={16} />
             </Button>
           </div>
+          <Input
+            label="Bandos numeris"
+            list="herd-suggestions"
+            autoComplete="off"
+            placeholder={herdSuggestions.length ? "Pasirinkite esamą arba įveskite naują" : "pvz. 12"}
+            value={form.herd_no}
+            onChange={(e) => setForm({ ...form, herd_no: e.target.value })}
+          />
+          <datalist id="herd-suggestions">
+            {herdSuggestions.map((h) => (
+              <option key={h} value={h} />
+            ))}
+          </datalist>
           <Textarea
             label="Pastabos"
             value={form.notes}
