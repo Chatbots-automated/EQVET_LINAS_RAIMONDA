@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileInput } from "lucide-react";
+import { FileInput, Pencil, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, PurchaseSyncStatus } from "@/lib/database.types";
 import { Card } from "@/components/ui/Card";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { formatDate, formatMoney } from "@/lib/format";
 import { reconcilePurchaseAction, refreshPurchasesAction } from "@/app/(app)/sales-invoices/actions";
 import { SendPurchaseModal } from "./SendPurchaseModal";
+import { EditPurchaseModal } from "./EditPurchaseModal";
 
 type Purchase = Database["public"]["Tables"]["invoices"]["Row"];
 
@@ -22,9 +23,22 @@ const STATUS: Record<PurchaseSyncStatus, { label: string; className: string }> =
 };
 
 /** Supplier purchase documents and their Invoice123 (expense) status. */
-export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey?: number; openPurchaseId?: string | null }) {
+export function PurchaseDocumentsCard({
+  reloadKey,
+  openPurchaseId,
+  onChanged,
+  editable,
+}: {
+  reloadKey?: number;
+  openPurchaseId?: string | null;
+  /** Called after a document was edited or removed (stock changed). */
+  onChanged?: () => void;
+  /** Show edit / remove actions (the Redagavimas tab). */
+  editable?: boolean;
+}) {
   const [rows, setRows] = useState<Purchase[]>([]);
   const [sendFor, setSendFor] = useState<Purchase | null>(null);
+  const [editFor, setEditFor] = useState<Purchase | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function load() {
@@ -54,12 +68,16 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
     });
   }, []);
 
-  // A document registered only for Sąskaita123 and never sent holds nothing else — it can simply be removed.
+  // Removes the document and, atomically, the stock it received. The database refuses if any of it was already used.
   async function remove(p: Purchase) {
-    if (!confirm(`Pašalinti dokumentą ${p.supplier_name ?? ""} ${p.invoice_number ?? ""}? Jis dar neišsiųstas į Sąskaita123.`)) return;
-    const { error } = await createClient().from("invoices").delete().eq("id", p.id);
-    if (error) setNotice(`Nepavyko pašalinti: ${error.message}`);
+    const label = `${p.supplier_name ?? ""} ${p.invoice_number ?? ""}`.trim();
+    const stock = p.saved_to_gvet === false ? "" : " Jos prekės bus pašalintos ir iš atsargų bei žurnalų.";
+    const sent = p.invoice123_sync_status === "sent" ? " Sąskaita123 pirkimo įrašas liks — jį ištrinkite ten atskirai." : "";
+    if (!confirm(`Pašalinti dokumentą ${label}?${stock}${sent}`)) return;
+    const { error } = await createClient().rpc("delete_purchase_document", { p_invoice_id: p.id });
+    setNotice(error ? `Nepavyko pašalinti: ${error.message}` : `Dokumentas ${label} pašalintas.`);
     load();
+    if (!error) onChanged?.();
   }
 
   async function reconcile(p: Purchase) {
@@ -71,6 +89,11 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
   return (
     <Card title="Pirkimo dokumentai → Sąskaita123" titleIcon={<FileInput size={16} className="text-sky-600" />} className="mt-6">
       {notice && <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{notice}</p>}
+      {editable && rows.length > 0 && (
+        <p className="mb-3 text-sm text-slate-600">
+          Pasirinkite sąskaitą ir spauskite „Redaguoti“, kad pataisytumėte prekes, kiekius, mato vienetus ar sumas, arba „Pašalinti“, kad ją ištrintumėte.
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="text-sm text-slate-500">Pirkimo dokumentų dar nėra.</p>
       ) : (
@@ -109,15 +132,20 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
                         {p.invoice123_sync_status === "failed" ? "Bandyti dar kartą" : "Siųsti"}
                       </Button>
                     )}
-                    {p.saved_to_gvet === false && (p.invoice123_sync_status === "not_sent" || p.invoice123_sync_status === "failed") && (
-                      <Button size="sm" variant="ghost" className="ml-1" onClick={() => remove(p)}>
-                        Pašalinti
-                      </Button>
-                    )}
                     {(p.invoice123_sync_status === "needs_reconcile" || p.invoice123_sync_status === "sending") && (
                       <Button size="sm" variant="secondary" onClick={() => reconcile(p)}>
                         Patikrinti
                       </Button>
+                    )}
+                    {editable && p.invoice123_sync_status !== "sending" && (
+                      <>
+                        <Button size="sm" variant="ghost" className="ml-1" onClick={() => setEditFor(p)}>
+                          <Pencil size={13} /> Redaguoti
+                        </Button>
+                        <Button size="sm" variant="ghost" className="ml-1 text-red-600 hover:bg-red-50" onClick={() => remove(p)}>
+                          <Trash2 size={13} /> Pašalinti
+                        </Button>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -126,6 +154,15 @@ export function PurchaseDocumentsCard({ reloadKey, openPurchaseId }: { reloadKey
           </table>
         </div>
       )}
+
+      <EditPurchaseModal
+        purchase={editFor}
+        onClose={() => setEditFor(null)}
+        onSaved={() => {
+          load();
+          onChanged?.();
+        }}
+      />
 
       <SendPurchaseModal
         purchase={sendFor}

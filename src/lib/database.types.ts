@@ -772,6 +772,10 @@ export interface Database {
         Args: { p_product_id: string };
         Returns: string | null;
       };
+      delete_purchase_document: {
+        Args: { p_invoice_id: string };
+        Returns: undefined;
+      };
       save_visit_pricing: {
         Args: {
           p_visit_id: string;

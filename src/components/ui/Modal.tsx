@@ -9,6 +9,7 @@ export function Modal({
   title,
   children,
   wide,
+  xwide,
   icon,
   iconClassName = "bg-emerald-50 text-emerald-600",
 }: {
@@ -17,6 +18,7 @@ export function Modal({
   title: string;
   children: React.ReactNode;
   wide?: boolean;
+  xwide?: boolean;
   icon?: React.ReactNode;
   iconClassName?: string;
 }) {
@@ -33,7 +35,7 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-10 sm:pt-16">
       <div
-        className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} rounded-xl bg-white shadow-xl`}
+        className={`w-full ${xwide ? "max-w-5xl" : wide ? "max-w-2xl" : "max-w-md"} rounded-xl bg-white shadow-xl`}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div className="flex items-center gap-3">

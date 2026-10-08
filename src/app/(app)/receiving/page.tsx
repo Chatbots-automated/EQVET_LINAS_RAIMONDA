@@ -99,7 +99,7 @@ const EMPTY_QUICK_SUPPLIER = { name: "", code: "", vat_code: "" };
 
 export default function ReceivingPage() {
   const supabase = createClient();
-  const [mode, setMode] = useState<"manual" | "pdf">(WEBHOOK_URL ? "pdf" : "manual");
+  const [mode, setMode] = useState<"manual" | "pdf" | "edit">(WEBHOOK_URL ? "pdf" : "manual");
 
   const [products, setProducts] = useState<Product[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -657,9 +657,17 @@ export default function ReceivingPage() {
         >
           Rankinis įvedimas
         </button>
+        <button
+          onClick={() => setMode("edit")}
+          className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+            mode === "edit" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          Redagavimas
+        </button>
       </div>
 
-      {invoice123Enabled && (
+      {invoice123Enabled && mode !== "edit" && (
         <label
           className={`mb-4 flex max-w-3xl cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${
             saveToGvet ? "border-emerald-200 bg-emerald-50/50" : "border-sky-200 bg-sky-50/60"
@@ -1069,6 +1077,7 @@ export default function ReceivingPage() {
         </Card>
       )}
 
+      {mode !== "edit" && (
       <Card title="Paskutinės pajamuotos partijos" className="overflow-hidden p-0">
         {loadingLog ? (
           <div className="p-5 text-sm text-slate-500">Kraunama...</div>
@@ -1107,8 +1116,14 @@ export default function ReceivingPage() {
           </div>
         )}
       </Card>
+      )}
 
-      <PurchaseDocumentsCard reloadKey={purchasesReloadKey} openPurchaseId={openPurchaseId} />
+      <PurchaseDocumentsCard
+        reloadKey={purchasesReloadKey}
+        openPurchaseId={openPurchaseId}
+        onChanged={loadLog}
+        editable={mode === "edit"}
+      />
 
       <Modal
         open={quickProductOpen}
