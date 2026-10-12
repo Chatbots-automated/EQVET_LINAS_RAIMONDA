@@ -13,6 +13,7 @@ import { CATEGORY_LABELS, speciesLabel } from "@/lib/labels";
 import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
 import { centsToNumber, toCents } from "@/lib/money";
 import { useProfileName } from "@/lib/profile";
+import { importInvoice123ClientsAction } from "@/app/(app)/sales-invoices/actions";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
@@ -78,15 +79,26 @@ export default function MassTreatmentPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
+    // Pick up clients created / changed in Invoice123 since the Klientai page was last opened.
+    // Silent: tenants without a connection simply get an error result, which is ignored.
+    importInvoice123ClientsAction().then((res) => {
+      if (res.ok && (res.data.inserted || res.data.updated || res.data.linked || res.data.removed.length || res.data.unlinked.length)) load();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- clients / herds ----------------------------------------------------------
 
+  // Every client (hand-entered and from Invoice123) — a client with no animals yet is
+  // still listed so the vet can see why there is nothing to treat.
   const clientOptions = useMemo(() => {
-    const withAnimals = new Set(animals.map((a) => a.client_id ?? NO_CLIENT));
-    const list = clients.filter((c) => withAnimals.has(c.id)).map((c) => ({ value: c.id, label: c.name }));
-    if (withAnimals.has(NO_CLIENT)) list.push({ value: NO_CLIENT, label: "— Klientas nenurodytas —" });
+    const counts = new Map<string, number>();
+    for (const a of animals) counts.set(a.client_id ?? NO_CLIENT, (counts.get(a.client_id ?? NO_CLIENT) ?? 0) + 1);
+    const list = clients.map((c) => {
+      const n = counts.get(c.id) ?? 0;
+      return { value: c.id, label: n ? `${c.name} (${n} gyv.)` : `${c.name} (gyvūnų nėra)` };
+    });
+    if (counts.has(NO_CLIENT)) list.push({ value: NO_CLIENT, label: `— Klientas nenurodytas — (${counts.get(NO_CLIENT)} gyv.)` });
     return list;
   }, [animals, clients]);
 
@@ -272,7 +284,7 @@ export default function MassTreatmentPage() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <Card title="1. Gyvūnai" titleIcon={<Syringe size={16} className="text-emerald-600" />}>
             {clientOptions.length === 0 ? (
-              <EmptyState message="Aktyvių gyvūnų nėra. Pirmiausia pridėkite gyvūnus skyriuje „Gyvūnai“." />
+              <EmptyState message="Klientų nėra. Pirmiausia pridėkite klientus skyriuje „Klientai“ arba sinchronizuokite iš Sąskaita123." />
             ) : (
               <div className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -294,6 +306,16 @@ export default function MassTreatmentPage() {
                     ))}
                   </Select>
                 </div>
+
+                {clientId && clientAnimals.length === 0 && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    Šis klientas dar neturi aktyvių gyvūnų.{" "}
+                    <Link href="/animals" className="font-medium underline">
+                      Pridėti gyvūnus
+                    </Link>{" "}
+                    ir grįžkite čia.
+                  </p>
+                )}
 
                 {herd && (
                   <div>
