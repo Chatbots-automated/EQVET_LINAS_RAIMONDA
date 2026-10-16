@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { BadgeEuro, ClipboardList, Pencil, Plus, Receipt, Trash2, X } from "lucide-react";
+import { BadgeEuro, ClipboardList, Paperclip, Pencil, Plus, Receipt, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database, Unit } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -12,13 +12,24 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { DateField, DateInput, Input, SearchSelect, Textarea } from "@/components/ui/Field";
-import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
+import { animalLabel, formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
 import { useProfileName } from "@/lib/profile";
 import { visitInvoiceLines, visitServiceLines } from "@/lib/visit-pricing";
 import { loadInvoicesByVisit, type VisitInvoice } from "@/lib/visit-invoices";
 import { loadServiceCatalog, type CatalogService } from "@/lib/service-catalog";
 import { InvoiceDraftModal, type DraftLine } from "@/components/invoices/InvoiceDraftModal";
 import { VisitPricingModal } from "@/components/visits/VisitPricingModal";
+import { StagedFiles } from "@/components/attachments/StagedFiles";
+import { VisitFiles } from "@/components/attachments/VisitFiles";
+import { AttachmentGallery } from "@/components/attachments/AttachmentGallery";
+import {
+  loadAnimalAttachments,
+  loadAttachmentCounts,
+  loadVisitAttachments,
+  removeStoredFiles,
+  uploadVisitFiles,
+  type Attachment,
+} from "@/lib/attachments";
 
 type Animal = Database["public"]["Tables"]["animals"]["Row"];
 type ClientRow = Database["public"]["Tables"]["clients"]["Row"];
@@ -82,6 +93,12 @@ function VisitsPageInner() {
   const [serviceRows, setServiceRows] = useState<string[]>([""]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Photos / files picked in the create form; uploaded once the visit is saved.
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  // visit id → file count (paperclip in the list) and, on an animal's page, that animal's files.
+  const [attachmentCounts, setAttachmentCounts] = useState<Map<string, number>>(new Map());
+  const [animalAttachments, setAnimalAttachments] = useState<Attachment[]>([]);
 
   const [detailVisit, setDetailVisit] = useState<Visit | null>(null);
   const [addLine, setAddLine] = useState<UsageLine>(emptyLine());
@@ -154,6 +171,17 @@ function VisitsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function loadFiles() {
+    setAttachmentCounts(await loadAttachmentCounts(supabase));
+    if (animalFilter) setAnimalAttachments(await loadAnimalAttachments(supabase, [animalFilter]));
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadFiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animalFilter]);
+
   // Deep link from a client's page / an invoice: /visits?visit=<id> opens that visit.
   useEffect(() => {
     if (!visitParam || loading) return;
@@ -216,6 +244,7 @@ function VisitsPageInner() {
     setForm({ ...EMPTY_VISIT_FORM, visit_date: todayISO(), vet_name: profileName, animal_id: animalFilter ?? "" });
     setLines([emptyLine()]);
     setServiceRows([""]);
+    setStagedFiles([]);
     setError(null);
     setCreateOpen(true);
   }
@@ -273,16 +302,24 @@ function VisitsPageInner() {
       if (usageError) usageErrors.push(usageError.message);
     }
 
+    const fileErrors = stagedFiles.length > 0 ? (await uploadVisitFiles(supabase, visit.id, stagedFiles)).errors : [];
+
     const saved = await fetchVisit(visit.id);
     setSaving(false);
     setCreateOpen(false);
+    setStagedFiles([]);
     loadVisits();
     loadReference();
+    loadFiles();
 
-    if (usageErrors.length > 0) {
-      // The visit exists — open its card so the missing products can be added there.
+    if (usageErrors.length > 0 || fileErrors.length > 0) {
+      // The visit exists — open its card so the missing products / files can be added there.
       if (saved) openDetail(saved);
-      setAddLineError(`Vizitas išsaugotas, bet kai kurių produktų nurašyti nepavyko: ${usageErrors.join("; ")}. Pridėkite juos čia.`);
+      const problems = [
+        usageErrors.length > 0 && `kai kurių produktų nurašyti nepavyko: ${usageErrors.join("; ")}`,
+        fileErrors.length > 0 && `kai kurių failų įkelti nepavyko: ${fileErrors.join(" ")}`,
+      ].filter(Boolean);
+      setAddLineError(`Vizitas išsaugotas, bet ${problems.join(". Be to, ")}. Pridėkite juos čia.`);
       return;
     }
     // Visit finished → prices (antkainis + service prices) right away.
@@ -290,13 +327,18 @@ function VisitsPageInner() {
   }
 
   async function handleDeleteVisit(v: Visit) {
-    if (!confirm("Ištrinti vizitą? Bus atstatytos panaudotų produktų atsargos.")) return;
+    const fileCount = attachmentCounts.get(v.visit_id) ?? 0;
+    if (!confirm(`Ištrinti vizitą? Bus atstatytos panaudotų produktų atsargos${fileCount > 0 ? ` ir ištrinti ${fileCount} failai` : ""}.`)) return;
+    // The rows go with the visit (cascade); the stored files have to be removed explicitly.
+    const files = await loadVisitAttachments(supabase, v.visit_id);
     const { error } = await supabase.from("visits").delete().eq("id", v.visit_id);
     if (error) {
       alert(`Nepavyko ištrinti: ${error.message}`);
       return;
     }
+    await removeStoredFiles(supabase, files.map((f) => f.storage_path));
     setDetailVisit(null);
+    loadFiles();
     loadVisits();
     loadReference();
   }
@@ -474,6 +516,12 @@ function VisitsPageInner() {
         )}
       </div>
 
+      {filterAnimal && animalAttachments.length > 0 && (
+        <Card title={`Gyvūno failai (${animalAttachments.length})`} titleIcon={<Paperclip size={16} />} className="mb-4">
+          <AttachmentGallery attachments={animalAttachments} visits={visits} onChanged={loadFiles} />
+        </Card>
+      )}
+
       <Card className="overflow-hidden p-0">
         {loading ? (
           <div className="p-5 text-sm text-slate-500">Kraunama...</div>
@@ -501,9 +549,20 @@ function VisitsPageInner() {
                   className="cursor-pointer hover:bg-slate-50"
                   onClick={() => openDetail(v)}
                 >
-                  <td className="px-5 py-3 text-slate-600">{formatDate(v.visit_date)}</td>
+                  <td className="px-5 py-3 whitespace-nowrap text-slate-600">
+                    {formatDate(v.visit_date)}
+                    {(attachmentCounts.get(v.visit_id) ?? 0) > 0 && (
+                      <span className="ml-2 inline-flex items-center gap-0.5 text-xs text-slate-500" title="Nuotraukos / failai">
+                        <Paperclip size={12} />
+                        {attachmentCounts.get(v.visit_id)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-5 py-3">
-                    <div className="font-medium text-slate-900">{v.animal_tag ?? "—"}</div>
+                    <div className="font-medium text-slate-900">
+                      {v.animal_tag ?? "—"}
+                      {v.animal_name && <span className="ml-1.5 font-normal text-slate-600">({v.animal_name})</span>}
+                    </div>
                     {v.client_name && <div className="text-xs text-slate-500">{v.client_name}</div>}
                   </td>
                   <td className="px-5 py-3 text-slate-600">{v.reason || v.diagnosis || "—"}</td>
@@ -686,6 +745,8 @@ function VisitsPageInner() {
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
           />
 
+          <StagedFiles files={stagedFiles} onChange={setStagedFiles} />
+
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
@@ -703,7 +764,7 @@ function VisitsPageInner() {
       <Modal
         open={!!detailVisit}
         onClose={() => setDetailVisit(null)}
-        title={detailVisit ? `Vizitas · ${detailVisit.animal_tag ?? "—"} · ${formatDate(detailVisit.visit_date)}` : ""}
+        title={detailVisit ? `Vizitas · ${animalLabel(detailVisit.animal_tag, detailVisit.animal_name)} · ${formatDate(detailVisit.visit_date)}` : ""}
         icon={<ClipboardList size={18} />}
         iconClassName="bg-rose-50 text-rose-600"
         wide
@@ -762,6 +823,18 @@ function VisitsPageInner() {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-slate-500">Gyvūnas</div>
+                  <div className="font-medium">
+                    {detailVisit.animal_tag ?? "—"}
+                    {detailVisit.animal_name && <span className="ml-1.5 font-normal">({detailVisit.animal_name})</span>}
+                    {detailVisit.species && <span className="ml-1.5 text-xs font-normal text-slate-500">{detailVisit.species}</span>}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Klientas</div>
+                  <div>{detailVisit.client_name || "—"}</div>
+                </div>
                 <div>
                   <div className="text-xs text-slate-500">Priežastis</div>
                   <div>{detailVisit.reason || "—"}</div>
@@ -892,6 +965,8 @@ function VisitsPageInner() {
               </div>
               {addLineError && <p className="mt-1 text-xs text-red-600">{addLineError}</p>}
             </div>
+
+            <VisitFiles key={detailVisit.visit_id} visitId={detailVisit.visit_id} onChanged={loadFiles} />
 
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="text-sm">

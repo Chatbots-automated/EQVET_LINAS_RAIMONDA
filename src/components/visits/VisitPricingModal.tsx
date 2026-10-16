@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { animalLabel, formatDate, formatMoney, formatQty } from "@/lib/format";
 import { centsToNumber, centsToString, toCents } from "@/lib/money";
 import { applyMarkup, lineCostCents, visitServiceLines } from "@/lib/visit-pricing";
 import { findCatalogService, loadServiceCatalog, rememberServices, type CatalogService } from "@/lib/service-catalog";
@@ -203,7 +203,7 @@ export function VisitPricingModal({
     <Modal
       open
       onClose={onClose}
-      title={`Vizito užbaigimas · ${visit.animal_tag ?? "—"} · ${formatDate(visit.visit_date)}`}
+      title={`Vizito užbaigimas · ${animalLabel(visit.animal_tag, visit.animal_name)} · ${formatDate(visit.visit_date)}`}
       icon={<BadgeEuro size={18} />}
       iconClassName="bg-amber-50 text-amber-700"
       wide

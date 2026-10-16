@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, FileText, PawPrint, Plus, Receipt, Stethoscope, Wallet } from "lucide-react";
+import { ArrowLeft, FileText, Paperclip, PawPrint, Plus, Receipt, Stethoscope, Wallet } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
@@ -12,7 +12,9 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { DateField } from "@/components/ui/Field";
 import { InvoiceDraftModal, type DraftLine } from "@/components/invoices/InvoiceDraftModal";
-import { formatDate, formatMoney, formatQty } from "@/lib/format";
+import { AttachmentGallery } from "@/components/attachments/AttachmentGallery";
+import { loadAnimalAttachments, type Attachment } from "@/lib/attachments";
+import { animalLabel, formatDate, formatMoney, formatQty } from "@/lib/format";
 import { centsToNumber, toCents } from "@/lib/money";
 import { INVOICE_STATUS_LABELS, PAYMENT_STATUS_COLORS, PAYMENT_STATUS_LABELS, speciesLabel } from "@/lib/labels";
 import { visitInvoiceLines } from "@/lib/visit-pricing";
@@ -36,6 +38,8 @@ export default function ClientDetailPage() {
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
+  // Photos / files of all this client's animals' visits.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [itemTitles, setItemTitles] = useState<Map<string, string[]>>(new Map());
   const [invoicesByVisit, setInvoicesByVisit] = useState<Map<string, VisitInvoice[]>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -64,6 +68,7 @@ export default function ClientDetailPage() {
     for (const it of items ?? []) titles.set(it.invoice_id, [...(titles.get(it.invoice_id) ?? []), it.title]);
 
     setInvoicesByVisit(await loadInvoicesByVisit(supabase, (v ?? []).map((x) => x.visit_id)));
+    setAttachments(await loadAnimalAttachments(supabase, (a ?? []).map((x) => x.id)));
     setClient(c ?? null);
     setAnimals(a ?? []);
     setVisits(v ?? []);
@@ -114,6 +119,18 @@ export default function ClientDetailPage() {
     for (const titles of itemTitles.values()) for (const t of titles) set.add(t);
     return [...set].sort((a, b) => a.localeCompare(b, "lt"));
   }, [visits, itemTitles]);
+
+  // Files follow the same filters as the visit list (period, animal, service / medicine).
+  const filteredAttachments = useMemo(() => {
+    const ids = new Set(filteredVisits.map((v) => v.visit_id));
+    return attachments.filter((a) => ids.has(a.visit_id));
+  }, [attachments, filteredVisits]);
+
+  const filesByAnimal = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const a of attachments) if (a.animal_id) m.set(a.animal_id, (m.get(a.animal_id) ?? 0) + 1);
+    return m;
+  }, [attachments]);
 
   const issued = filteredInvoices.filter((i) => i.status === "created");
   const invoicedCents = issued.reduce((s, i) => s + (toCents(i.total) ?? 0), 0);
@@ -239,21 +256,59 @@ export default function ClientDetailPage() {
           <p className="text-sm text-slate-500">Šiam klientui gyvūnų nepriskirta.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {animals.map((a) => (
-              <Link
-                key={a.id}
-                href={`/visits?animal=${a.id}`}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
-                title="Gyvūno vizitai"
-              >
-                <span className="font-medium text-slate-900">{a.tag_no}</span>
-                <span className="ml-1.5 text-slate-500">{[a.name, speciesLabel(a.species)].filter(Boolean).join(" · ")}</span>
-                {!a.active && <Badge className="ml-2">Neaktyvus</Badge>}
-              </Link>
-            ))}
+            {animals.map((a) => {
+              const selected = animalFilter === a.id;
+              const files = filesByAnimal.get(a.id) ?? 0;
+              return (
+                <div
+                  key={a.id}
+                  className={`flex items-stretch overflow-hidden rounded-lg border text-sm ${selected ? "border-emerald-500 bg-emerald-50" : "border-slate-200"}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setAnimalFilter(selected ? "" : a.id)}
+                    className="px-3 py-2 text-left hover:bg-slate-50"
+                    title={selected ? "Rodyti visus gyvūnus" : "Rodyti tik šio gyvūno vizitus ir failus"}
+                    aria-pressed={selected}
+                  >
+                    <span className="font-medium text-slate-900">{a.tag_no}</span>
+                    <span className="ml-1.5 text-slate-500">{[a.name, speciesLabel(a.species)].filter(Boolean).join(" · ")}</span>
+                    {files > 0 && (
+                      <span className="ml-2 inline-flex items-center gap-0.5 text-xs text-slate-500" title="Nuotraukos / failai">
+                        <Paperclip size={12} />
+                        {files}
+                      </span>
+                    )}
+                    {!a.active && <Badge className="ml-2">Neaktyvus</Badge>}
+                  </button>
+                  <Link
+                    href={`/visits?animal=${a.id}`}
+                    className="flex items-center border-l border-slate-200 px-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+                    title="Gyvūno vizitų istorija"
+                    aria-label="Gyvūno vizitai"
+                  >
+                    <Stethoscope size={14} />
+                  </Link>
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
+
+      {attachments.length > 0 && (
+        <Card
+          title={`Nuotraukos ir failai (${filteredAttachments.length})`}
+          titleIcon={<Paperclip size={16} />}
+          className="mb-6"
+        >
+          {filteredAttachments.length === 0 ? (
+            <p className="text-sm text-slate-500">Pagal pasirinktus filtrus failų nerasta.</p>
+          ) : (
+            <AttachmentGallery attachments={filteredAttachments} visits={visits} onChanged={load} />
+          )}
+        </Card>
+      )}
 
       <Card title="Vizitai" titleIcon={<Stethoscope size={16} />} className="mb-6 overflow-hidden [&>div:last-child]:p-0">
         {filteredVisits.length === 0 ? (
@@ -284,7 +339,7 @@ export default function ClientDetailPage() {
                           {formatDate(v.visit_date)}
                         </Link>
                       </td>
-                      <td className="px-5 py-3 text-slate-900">{v.animal_tag ?? "—"}</td>
+                      <td className="px-5 py-3 text-slate-900">{animalLabel(v.animal_tag, v.animal_name)}</td>
                       <td className="px-5 py-3 text-slate-600">{v.services || v.reason || "—"}</td>
                       <td className="px-5 py-3 text-slate-600">
                         {v.products_used.map((p) => `${p.product_name} (${formatQty(p.quantity, p.unit)})`).join(", ") || "—"}

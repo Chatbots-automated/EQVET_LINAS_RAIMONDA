@@ -104,7 +104,9 @@ export function PurchaseDocumentsCard({
                 <th className="px-5 py-2">Tiekėjas</th>
                 <th className="px-5 py-2">Dokumento Nr.</th>
                 <th className="px-5 py-2">Data</th>
-                <th className="px-5 py-2 text-right">Suma</th>
+                <th className="px-5 py-2 text-right">Be PVM</th>
+                <th className="px-5 py-2 text-right">PVM</th>
+                <th className="px-5 py-2 text-right">Viso su PVM</th>
                 <th className="px-5 py-2">Sąskaita123</th>
                 <th className="px-5 py-2" />
               </tr>
@@ -120,7 +122,9 @@ export function PurchaseDocumentsCard({
                     )}
                   </td>
                   <td className="px-5 py-2">{formatDate(p.invoice_date)}</td>
-                  <td className="px-5 py-2 text-right">{formatMoney(p.total_gross)}</td>
+                  <td className="px-5 py-2 text-right text-slate-600">{formatMoney(p.total_net)}</td>
+                  <td className="px-5 py-2 text-right text-slate-600">{formatMoney(p.total_vat)}</td>
+                  <td className="px-5 py-2 text-right font-medium">{formatMoney(p.total_gross)}</td>
                   <td className="px-5 py-2">
                     <Badge className={(STATUS[p.invoice123_sync_status] ?? STATUS.not_sent).className}>
                       {(STATUS[p.invoice123_sync_status] ?? STATUS.not_sent).label}

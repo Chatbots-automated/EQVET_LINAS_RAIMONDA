@@ -8,7 +8,7 @@ import type { Database } from "@/lib/database.types";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { DateInput, SearchSelect } from "@/components/ui/Field";
-import { formatDate, formatMoney, todayISO as today } from "@/lib/format";
+import { animalLabel, formatDate, formatMoney, todayISO as today } from "@/lib/format";
 import { findCatalogService, loadServiceCatalog, type CatalogService } from "@/lib/service-catalog";
 import { isInvoiced, loadInvoicesByVisit } from "@/lib/visit-invoices";
 import { visitInvoiceLines } from "@/lib/visit-pricing";
@@ -333,7 +333,7 @@ export function InvoiceDraftModal({
                       />
                       <span className="min-w-0 flex-1">
                         <span className="font-medium text-slate-900">
-                          {formatDate(v.visit_date)} · {v.animal_tag ?? "—"}
+                          {formatDate(v.visit_date)} · {animalLabel(v.animal_tag, v.animal_name)}
                         </span>
                         <span className="ml-2 text-slate-500">
                           {[v.services, ...v.products_used.map((p) => p.product_name)].filter(Boolean).join(", ") || "be paslaugų"}

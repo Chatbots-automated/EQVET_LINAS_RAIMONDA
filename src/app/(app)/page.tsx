@@ -19,7 +19,7 @@ import type { Database } from "@/lib/database.types";
 import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { formatDate, formatMoney, formatQty, toISODate } from "@/lib/format";
+import { animalLabel, formatDate, formatMoney, formatQty, toISODate } from "@/lib/format";
 import { STOCK_STATUS_COLORS, STOCK_STATUS_LABELS } from "@/lib/labels";
 
 type Visit = Database["public"]["Views"]["visit_history_view"]["Row"];
@@ -315,7 +315,7 @@ export default function DashboardPage() {
               {recentVisits.map((v) => (
                 <li key={v.visit_id} className="flex items-center justify-between py-2.5 text-sm">
                   <div>
-                    <span className="font-medium text-slate-900">{v.animal_tag ?? "—"}</span>
+                    <span className="font-medium text-slate-900">{animalLabel(v.animal_tag, v.animal_name)}</span>
                     <span className="ml-2 text-xs text-slate-500">{v.reason || v.diagnosis || "—"}</span>
                   </div>
                   <span className="text-xs text-slate-500">{formatDate(v.visit_date)}</span>

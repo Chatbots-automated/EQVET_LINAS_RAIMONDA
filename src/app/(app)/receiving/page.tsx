@@ -13,7 +13,7 @@ import { UNIT_LABELS } from "@/lib/labels";
 import { formatDate, formatMoney, formatQty, todayISO } from "@/lib/format";
 import { EMPTY_PRODUCT_FORM, ProductFormFields, productFormToPayload } from "@/components/ProductFormFields";
 import { PurchaseDocumentsCard } from "@/components/purchases/PurchaseDocumentsCard";
-import { centsToNumber, toCents } from "@/lib/money";
+import { centsToNumber, centsToString, netFromGrossCents, toCents, vatOnNetCents } from "@/lib/money";
 
 type Product = Database["public"]["Tables"]["products"]["Row"];
 type Supplier = Database["public"]["Tables"]["suppliers"]["Row"];
@@ -71,10 +71,42 @@ interface ReviewRow {
   product_id: string;
   lot: string;
   expiry_date: string;
+  /** Quantity exactly as printed on the supplier invoice (usually a pack count). */
+  invoice_qty: string;
+  /** Stock quantity in the product's unit (ml, vnt...) — what the batch receives. */
   quantity: string;
+  /** Size of one pack in the product's unit (pakuotės dydis); prefilled from the product, editable. */
+  package_size: string;
+  /** Packs received (pakuočių kiekis); filled only when a pack size is known. */
+  package_count: string;
   unit_price: string;
   net: string;
   vat_rate: string;
+}
+
+/** Packs × pack size, rounded to 3 decimals; "" until both are positive numbers. */
+function packTotal(size: string, count: string): string {
+  const s = Number(size);
+  const c = Number(count);
+  return s > 0 && c > 0 ? String(Math.round(s * c * 1000) / 1000) : "";
+}
+
+/**
+ * A supplier invoice counts packs ("2 × Butomidor 10 ml"), but stock is kept in
+ * the product's unit. With a pack size, packs × size is the stock quantity;
+ * without one the invoice quantity is taken as it is. `patch` is what the user
+ * just changed; the result is that patch plus the quantity it implies.
+ */
+function withStock(row: ReviewRow, patch: Partial<ReviewRow>): Partial<ReviewRow> {
+  const next = { ...row, ...patch };
+  if (!(Number(next.package_size) > 0)) {
+    // Nothing to multiply. If a size was just removed or the product changed, go back to the invoice quantity.
+    return "package_size" in patch ? { ...patch, package_count: "", quantity: next.invoice_qty } : patch;
+  }
+  // A pack size typed on a row that had none: the invoice quantity is the pack count.
+  const package_count = next.package_count || next.invoice_qty;
+  const quantity = packTotal(next.package_size, package_count);
+  return { ...patch, package_count, ...(quantity ? { quantity } : {}) };
 }
 
 const EMPTY_MANUAL_FORM = {
@@ -88,6 +120,10 @@ const EMPTY_MANUAL_FORM = {
   doc_number: "",
   doc_date: todayISO(),
   purchase_price: "",
+  // Price incl. VAT — kept in step with purchase_price (net) through vat_rate.
+  gross_price: "",
+  // Pakuotės dydis × pakuočių kiekis = gautas kiekis (received_qty).
+  package_size: "",
   package_count: "",
   received_qty: "",
   unit: "" as Unit | "",
@@ -203,13 +239,63 @@ export default function ReceivingPage() {
     [products, manualForm.product_id]
   );
 
-  function handlePackageCountChange(value: string) {
-    const packageSize = selectedManualProduct?.package_size;
-    const count = Number(value);
-    const nextReceivedQty =
-      packageSize && count > 0 ? String(packageSize * count) : manualForm.received_qty;
-    setManualForm((f) => ({ ...f, package_count: value, received_qty: nextReceivedQty }));
+  // Pakuotės dydis × pakuočių kiekis = gautas kiekis. Once both are filled the total follows
+  // them; until then (or without a pack size) the total is typed by hand.
+  function setManualPacks(patch: Partial<Pick<typeof manualForm, "product_id" | "package_size" | "package_count">>) {
+    setManualForm((f) => {
+      const next = { ...f, ...patch };
+      const total = packTotal(next.package_size, next.package_count);
+      return total ? { ...next, received_qty: total } : next;
+    });
   }
+
+  function handleManualProductChange(productId: string) {
+    const picked = products.find((p) => p.id === productId);
+    setManualPacks({ product_id: productId, package_size: picked?.package_size ? String(picked.package_size) : "" });
+  }
+
+  const manualPackTotal = packTotal(manualForm.package_size, manualForm.package_count);
+
+  /** A pack size typed at receiving is kept on a product that has none, so the next receipt is prefilled. */
+  async function rememberPackageSize(product: Product, size: string) {
+    const value = Number(size);
+    if (product.package_size || !(value > 0)) return;
+    const { error } = await supabase.from("products").update({ package_size: value }).eq("id", product.id);
+    if (!error) setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, package_size: value } : p)));
+  }
+
+  // Net ("be PVM") and gross ("su PVM") price are two views of one amount: typing either fills the other.
+  function isVatRate(text: string) {
+    return text !== "" && Number.isInteger(Number(text)) && Number(text) >= 0 && Number(text) <= 100;
+  }
+
+  function handleNetPriceChange(value: string) {
+    const cents = toCents(value);
+    const rate = Number(manualForm.vat_rate);
+    const gross = cents !== null && isVatRate(manualForm.vat_rate) ? centsToString(cents + vatOnNetCents(cents, rate)) : "";
+    setManualForm((f) => ({ ...f, purchase_price: value, gross_price: gross }));
+  }
+
+  function handleGrossPriceChange(value: string) {
+    const cents = toCents(value);
+    const rate = Number(manualForm.vat_rate);
+    const net = cents !== null && isVatRate(manualForm.vat_rate) ? centsToString(netFromGrossCents(cents, rate)) : "";
+    setManualForm((f) => ({ ...f, gross_price: value, purchase_price: net }));
+  }
+
+  function handleVatRateChange(raw: string) {
+    const value = raw.replace(/[^\d]/g, "");
+    const net = toCents(manualForm.purchase_price);
+    const gross = net !== null && isVatRate(value) ? centsToString(net + vatOnNetCents(net, Number(value))) : manualForm.gross_price;
+    setManualForm((f) => ({ ...f, vat_rate: value, gross_price: gross }));
+  }
+
+  // Live "be PVM / PVM / viso" for the amount typed above.
+  const manualNetCents = toCents(manualForm.purchase_price);
+  const manualVatBreakdown =
+    manualNetCents !== null && isVatRate(manualForm.vat_rate)
+      ? { net: manualNetCents, vat: vatOnNetCents(manualNetCents, Number(manualForm.vat_rate)) }
+      : null;
 
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -265,6 +351,8 @@ export default function ReceivingPage() {
       }
       purchaseId = purchase.id;
     }
+
+    await rememberPackageSize(product, manualForm.package_size);
 
     const { data: batch, error } = await supabase.from("batches").insert({
       invoice_id: purchaseId,
@@ -395,23 +483,32 @@ export default function ReceivingPage() {
 
       setWebhookData(data);
       setReviewRows(
-        data.items.map((item) => ({
-          include: true,
-          description: item.description,
-          sku: item.sku ?? "",
-          product_id: findProductMatch(item.description),
-          lot: item.batch ?? "",
-          expiry_date: item.expiry ?? "",
-          quantity: item.qty != null ? String(item.qty) : "",
-          unit_price: item.unit_price != null ? String(item.unit_price) : "",
-          net: item.net != null ? String(item.net) : "",
-          vat_rate:
-            item.vat_rate != null
-              ? String(Math.round(item.vat_rate))
-              : item.vat != null && item.net
-                ? String(Math.round((item.vat / item.net) * 100))
-                : "",
-        }))
+        data.items.map((item) => {
+          const productId = findProductMatch(item.description);
+          const product = products.find((p) => p.id === productId);
+          const invoiceQty = item.qty != null ? String(item.qty) : "";
+          const row: ReviewRow = {
+            include: true,
+            description: item.description,
+            sku: item.sku ?? "",
+            product_id: productId,
+            lot: item.batch ?? "",
+            expiry_date: item.expiry ?? "",
+            invoice_qty: invoiceQty,
+            quantity: invoiceQty,
+            package_size: product?.package_size ? String(product.package_size) : "",
+            package_count: "",
+            unit_price: item.unit_price != null ? String(item.unit_price) : "",
+            net: item.net != null ? String(item.net) : "",
+            vat_rate:
+              item.vat_rate != null
+                ? String(Math.round(item.vat_rate))
+                : item.vat != null && item.net
+                  ? String(Math.round((item.vat / item.net) * 100))
+                  : "",
+          };
+          return { ...row, ...withStock(row, {}) };
+        })
       );
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Nepavyko apdoroti PDF.");
@@ -522,6 +619,8 @@ export default function ReceivingPage() {
         const product = products.find((p) => p.id === row.product_id);
         if (!product) continue;
 
+        await rememberPackageSize(product, row.package_size);
+
         const { data: batch, error: batchError } = await supabase
           .from("batches")
           .insert({
@@ -534,17 +633,20 @@ export default function ReceivingPage() {
             doc_date: webhookData.invoice.date || null,
             purchase_price: row.net ? Number(row.net) : row.unit_price ? Number(row.unit_price) : null,
             received_qty: Number(row.quantity) || 0,
+            package_count: row.package_count ? Number(row.package_count) : null,
             unit: product.unit,
           })
           .select()
           .single();
         if (batchError) throw batchError;
 
+        // The document line keeps the quantity printed on the supplier invoice
+        // (packs), the batch above holds the stock quantity (packs × size).
         await supabase.from("invoice_items").insert({
           invoice_id: invoice.id,
           batch_id: batch.id,
           description: row.description,
-          quantity: Number(row.quantity) || 0,
+          quantity: Number(row.package_count || row.quantity) || 0,
           unit_price: row.unit_price ? Number(row.unit_price) : null,
           total_price: row.net ? Number(row.net) : null,
           vat_rate: row.vat_rate !== "" && Number.isFinite(Number(row.vat_rate)) ? Number(row.vat_rate) : null,
@@ -566,16 +668,25 @@ export default function ReceivingPage() {
   function openQuickProduct(target: "manual" | number, prefillName = "") {
     setQuickProductTarget(target);
     setQuickProductForm({ ...EMPTY_PRODUCT_FORM, name: prefillName });
-    setQuickReceivingPackageCount("");
-    setQuickReceivingTotalQty(typeof target === "number" ? reviewRows[target]?.quantity ?? "" : "");
+    // From a PDF row the invoice quantity is the pack count; the total is derived from it.
+    setQuickReceivingPackageCount(typeof target === "number" ? reviewRows[target]?.invoice_qty ?? "" : "");
+    setQuickReceivingTotalQty("");
     setQuickProductOpen(true);
   }
 
+  // Total stock quantity of the PDF row being created: pack size × packs, unless typed by hand;
+  // without a pack size the invoice quantity is taken as it is.
+  const quickPackSize = Number(quickProductForm.package_size) || 0;
+  const quickPackCount = Number(quickReceivingPackageCount) || 0;
+  const quickAutoTotal =
+    quickPackSize && quickPackCount
+      ? String(Math.round(quickPackSize * quickPackCount * 1000) / 1000)
+      : quickReceivingPackageCount;
+  const quickTotalQty = quickReceivingTotalQty || quickAutoTotal;
+
   function handleQuickReceivingPackageCountChange(value: string) {
     setQuickReceivingPackageCount(value);
-    const size = Number(quickProductForm.package_size) || 0;
-    const count = Number(value) || 0;
-    if (size && count) setQuickReceivingTotalQty(String(size * count));
+    setQuickReceivingTotalQty("");
   }
 
   async function handleQuickProductSubmit(e: React.FormEvent) {
@@ -597,11 +708,17 @@ export default function ReceivingPage() {
     setProducts((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
 
     if (quickProductTarget === "manual") {
-      setManualForm((f) => ({ ...f, product_id: data.id }));
+      setManualPacks({ product_id: data.id, package_size: data.package_size ? String(data.package_size) : "" });
     } else if (typeof quickProductTarget === "number") {
+      const row = reviewRows[quickProductTarget];
       updateRow(quickProductTarget, {
-        product_id: data.id,
-        ...(quickReceivingTotalQty ? { quantity: quickReceivingTotalQty } : {}),
+        ...(row ? withStock(row, {
+          product_id: data.id,
+          package_size: data.package_size ? String(data.package_size) : "",
+          package_count: quickPackSize > 0 ? quickReceivingPackageCount : "",
+        }) : { product_id: data.id }),
+        // The dialog's total (computed or typed by hand) wins.
+        ...(quickTotalQty ? { quantity: quickTotalQty } : {}),
       });
     }
 
@@ -754,7 +871,7 @@ export default function ReceivingPage() {
               </div>
             ) : (
               <div>
-                <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-4">
+                <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-sm sm:grid-cols-3">
                   <div>
                     <div className="text-xs text-slate-500">Tiekėjas</div>
                     <div className="font-medium">{webhookData.supplier?.name || "—"}</div>
@@ -768,14 +885,23 @@ export default function ReceivingPage() {
                     <div className="font-medium">{webhookData.invoice.date || "—"}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-slate-500">Suma</div>
-                    <div className="font-medium">{formatMoney(webhookData.invoice.total_gross)}</div>
+                    <div className="text-xs text-slate-500">Be PVM</div>
+                    <div className="font-medium">{formatMoney(webhookData.invoice.total_net)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">PVM</div>
+                    <div className="font-medium">{formatMoney(webhookData.invoice.total_vat)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Viso su PVM</div>
+                    <div className="font-semibold">{formatMoney(webhookData.invoice.total_gross)}</div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
                   {reviewRows.map((row, i) => {
                     const matched = !saveToGvet || !!row.product_id;
+                    const rowProduct = products.find((p) => p.id === row.product_id);
                     return (
                     <div
                       key={i}
@@ -812,7 +938,14 @@ export default function ReceivingPage() {
                           <div className="mt-1 flex gap-1">
                             <select
                               value={row.product_id}
-                              onChange={(e) => updateRow(i, { product_id: e.target.value })}
+                              onChange={(e) => {
+                                const picked = products.find((p) => p.id === e.target.value);
+                                updateRow(i, withStock(row, {
+                                  product_id: e.target.value,
+                                  package_size: picked?.package_size ? String(picked.package_size) : row.package_size,
+                                  package_count: "",
+                                }));
+                              }}
                               className={`w-full rounded-lg border bg-white px-2 py-1.5 text-xs ${
                                 matched ? "border-emerald-300" : "border-amber-400"
                               }`}
@@ -838,23 +971,52 @@ export default function ReceivingPage() {
                             </button>
                           </div>
                         </div>
-                        <div>
-                          <label className="text-xs text-slate-500">Kiekis</label>
+                        <div className={saveToGvet ? "" : "hidden"}>
+                          <label className="text-xs text-slate-500">
+                            Pakuotės dydis{rowProduct ? ` (${rowProduct.unit})` : ""}
+                          </label>
                           <input
                             type="number"
                             step="any"
-                            value={row.quantity}
-                            onChange={(e) => updateRow(i, { quantity: e.target.value })}
+                            value={row.package_size}
+                            onChange={(e) => updateRow(i, withStock(row, { package_size: e.target.value }))}
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                          />
+                        </div>
+                        <div className={saveToGvet ? "" : "hidden"}>
+                          <label className="text-xs text-slate-500">Pakuočių kiekis</label>
+                          <input
+                            type="number"
+                            step="any"
+                            value={row.package_count}
+                            onChange={(e) => updateRow(i, withStock(row, { package_count: e.target.value }))}
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-slate-500">Kaina (be PVM)</label>
+                          <label className="text-xs text-slate-500">
+                            {saveToGvet ? `Kiekis viso${rowProduct ? ` (${rowProduct.unit})` : ""}` : "Kiekis"}
+                            {packTotal(row.package_size, row.package_count) && (
+                              <span className="ml-1 font-bold text-emerald-600">(auto)</span>
+                            )}
+                          </label>
                           <input
                             type="number"
                             step="any"
-                            value={row.net}
-                            onChange={(e) => updateRow(i, { net: e.target.value })}
+                            value={row.quantity}
+                            readOnly={!!packTotal(row.package_size, row.package_count)}
+                            onChange={(e) => updateRow(i, { quantity: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs read-only:bg-slate-50 read-only:font-semibold"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                        <div className={saveToGvet ? "" : "hidden"}>
+                          <label className="text-xs text-slate-500">Partija (lot)</label>
+                          <input
+                            type="text"
+                            value={row.lot}
+                            onChange={(e) => updateRow(i, { lot: e.target.value })}
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
@@ -867,14 +1029,13 @@ export default function ReceivingPage() {
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                        <div className={saveToGvet ? "" : "hidden"}>
-                          <label className="text-xs text-slate-500">Partija (lot)</label>
+                        <div>
+                          <label className="text-xs text-slate-500">Kaina (be PVM)</label>
                           <input
-                            type="text"
-                            value={row.lot}
-                            onChange={(e) => updateRow(i, { lot: e.target.value })}
+                            type="number"
+                            step="any"
+                            value={row.net}
+                            onChange={(e) => updateRow(i, { net: e.target.value })}
                             className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                           />
                         </div>
@@ -931,7 +1092,7 @@ export default function ReceivingPage() {
                   required={saveToGvet}
                   wrapperClassName="flex-1"
                   value={manualForm.product_id}
-                  onChange={(e) => setManualForm({ ...manualForm, product_id: e.target.value })}
+                  onChange={(e) => handleManualProductChange(e.target.value)}
                 >
                   <option value="">— Pasirinkti —</option>
                   {products.map((p) => (
@@ -964,29 +1125,43 @@ export default function ReceivingPage() {
               </div>
             </div>
 
-            {saveToGvet && selectedManualProduct?.package_size ? (
-              <p className="text-xs text-slate-500">
-                Pakuotės dydis: {formatQty(selectedManualProduct.package_size, selectedManualProduct.unit)}
-              </p>
-            ) : null}
-
             <div className="grid gap-3 sm:grid-cols-4">
               <Input
-                label="Kiek pakuočių"
+                label={`Pakuotės dydis (${manualForm.unit || selectedManualProduct?.unit || "vnt."})`}
                 wrapperClassName={saveToGvet ? "" : "hidden"}
                 type="number"
                 step="any"
-                value={manualForm.package_count}
-                onChange={(e) => handlePackageCountChange(e.target.value)}
+                min="0"
+                placeholder="pvz. 100"
+                value={manualForm.package_size}
+                onChange={(e) => setManualPacks({ package_size: e.target.value })}
               />
               <Input
-                label={saveToGvet ? "Gautas kiekis" : "Kiekis"}
+                label="Pakuočių kiekis"
+                wrapperClassName={saveToGvet ? "" : "hidden"}
                 type="number"
                 step="any"
-                required
-                value={manualForm.received_qty}
-                onChange={(e) => setManualForm({ ...manualForm, received_qty: e.target.value })}
+                min="0"
+                placeholder="pvz. 5"
+                value={manualForm.package_count}
+                onChange={(e) => setManualPacks({ package_count: e.target.value })}
               />
+              <div>
+                <Input
+                  label={saveToGvet ? "Gautas kiekis (viso)" : "Kiekis"}
+                  type="number"
+                  step="any"
+                  required
+                  readOnly={!!manualPackTotal}
+                  value={manualForm.received_qty}
+                  onChange={(e) => setManualForm({ ...manualForm, received_qty: e.target.value })}
+                />
+                {saveToGvet && manualPackTotal && (
+                  <p className="mt-1 text-xs font-medium text-emerald-700">
+                    {manualForm.package_count} pak. × {manualForm.package_size} = {manualPackTotal}
+                  </p>
+                )}
+              </div>
               <Select
                 label="Vienetas"
                 wrapperClassName={saveToGvet ? "" : "hidden"}
@@ -999,14 +1174,51 @@ export default function ReceivingPage() {
                   </option>
                 ))}
               </Select>
+            </div>
+
+            {saveToGvet && selectedManualProduct && !selectedManualProduct.package_size && Number(manualForm.package_size) > 0 && (
+              <p className="text-xs text-slate-500">Šis pakuotės dydis bus įsimintas produkte ir kitą kartą įsipildys pats.</p>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-4">
               <Input
                 label="Pirkimo kaina (viso, be PVM)"
                 type="number"
                 step="any"
                 value={manualForm.purchase_price}
-                onChange={(e) => setManualForm({ ...manualForm, purchase_price: e.target.value })}
+                onChange={(e) => handleNetPriceChange(e.target.value)}
+              />
+              <Input
+                label="PVM %"
+                inputMode="numeric"
+                value={manualForm.vat_rate}
+                onChange={(e) => handleVatRateChange(e.target.value)}
+              />
+              <Input
+                label="Pirkimo kaina (viso, su PVM)"
+                type="number"
+                step="any"
+                value={manualForm.gross_price}
+                onChange={(e) => handleGrossPriceChange(e.target.value)}
               />
             </div>
+
+            {manualVatBreakdown && (
+              <div className="grid grid-cols-3 gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm sm:max-w-md">
+                <div>
+                  <div className="text-xs text-slate-500">Be PVM</div>
+                  <div className="font-medium">{formatMoney(centsToNumber(manualVatBreakdown.net))}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">PVM {manualForm.vat_rate}%</div>
+                  <div className="font-medium">{formatMoney(centsToNumber(manualVatBreakdown.vat))}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Viso su PVM</div>
+                  <div className="font-semibold">{formatMoney(centsToNumber(manualVatBreakdown.net + manualVatBreakdown.vat))}</div>
+                </div>
+              </div>
+            )}
 
             <div className={saveToGvet ? "grid gap-3 sm:grid-cols-2" : "hidden"}>
               <Input
@@ -1052,15 +1264,6 @@ export default function ReceivingPage() {
                   />
                   Registruoti kaip pirkimą Sąskaita123 (reikia tiekėjo, dokumento Nr., datos ir kainos)
                 </label>
-                {(manualForm.as_purchase || !saveToGvet) && (
-                  <Input
-                    label="PVM %"
-                    wrapperClassName="mt-2 max-w-32"
-                    inputMode="numeric"
-                    value={manualForm.vat_rate}
-                    onChange={(e) => setManualForm({ ...manualForm, vat_rate: e.target.value.replace(/[^\d]/g, "") })}
-                  />
-                )}
               </div>
             )}
 
@@ -1094,7 +1297,7 @@ export default function ReceivingPage() {
                 <th className="px-5 py-3">Produktas</th>
                 <th className="px-5 py-3">Partija</th>
                 <th className="px-5 py-3">Kiekis</th>
-                <th className="px-5 py-3">Kaina</th>
+                <th className="px-5 py-3">Kaina be PVM</th>
                 <th className="px-5 py-3">Tiekėjas</th>
                 <th className="px-5 py-3">Galiojimas</th>
               </tr>
@@ -1154,14 +1357,14 @@ export default function ReceivingPage() {
                 <div>
                   <label className="block text-xs font-medium text-slate-700">
                     Viso{" "}
-                    {quickProductForm.package_size && quickReceivingPackageCount && (
+                    {quickPackSize > 0 && quickPackCount > 0 && !quickReceivingTotalQty && (
                       <span className="font-bold text-emerald-600">(auto)</span>
                     )}
                   </label>
                   <input
                     type="number"
                     step="any"
-                    value={quickReceivingTotalQty}
+                    value={quickTotalQty}
                     onChange={(e) => setQuickReceivingTotalQty(e.target.value)}
                     className="mt-1 w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold"
                     placeholder="500"

@@ -43,6 +43,11 @@ export function dateTextToISO(text: string) {
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
+/** "LT123456 · Murka": ear tag plus the animal's name when it has one. */
+export function animalLabel(tag: string | null | undefined, name: string | null | undefined) {
+  return [tag, name].filter(Boolean).join(" · ") || "—";
+}
+
 export function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined) return "—";
   return new Intl.NumberFormat("lt-LT", { style: "currency", currency: "EUR" }).format(value);

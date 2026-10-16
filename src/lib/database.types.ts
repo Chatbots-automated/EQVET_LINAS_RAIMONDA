@@ -346,6 +346,28 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["service_catalog"]["Row"]>;
         Relationships: [];
       };
+      // Photos / PDFs on a visit; bytes live in storage bucket "visit-files" at storage_path.
+      visit_attachments: {
+        Row: {
+          id: string;
+          user_id: string;
+          visit_id: string;
+          /** Copied from the visit by a trigger. */
+          animal_id: string | null;
+          storage_path: string;
+          file_name: string;
+          mime_type: string | null;
+          size_bytes: number | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["visit_attachments"]["Row"]> & {
+          visit_id: string;
+          storage_path: string;
+          file_name: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["visit_attachments"]["Row"]>;
+        Relationships: [];
+      };
       // Which visits an invoice covers. SELECT only for authenticated; written by the server.
       sales_invoice_visits: {
         Row: {

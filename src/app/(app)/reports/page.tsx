@@ -9,7 +9,7 @@ import { PageHeader, EmptyState } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { DateInput, SearchSelect } from "@/components/ui/Field";
-import { formatDate, formatMoney, formatQty, toISODate, todayISO as today } from "@/lib/format";
+import { animalLabel, formatDate, formatMoney, formatQty, toISODate, todayISO as today } from "@/lib/format";
 import { speciesLabel } from "@/lib/labels";
 import { exportToCsv, exportToPdf } from "@/lib/export";
 import { WasteJournalFields, withWasteDefaults, type WasteSettings } from "@/components/waste/WasteJournalFields";
@@ -732,7 +732,7 @@ export default function ReportsPage() {
                 {visits.map((v) => (
                   <tr key={v.visit_id} className="hover:bg-slate-50">
                     <td className="px-5 py-3 text-slate-600">{formatDate(v.visit_date)}</td>
-                    <td className="px-5 py-3 font-medium text-slate-900">{v.animal_tag ?? "—"}</td>
+                    <td className="px-5 py-3 font-medium text-slate-900">{animalLabel(v.animal_tag, v.animal_name)}</td>
                     <td className="px-5 py-3 text-slate-600">{v.client_name ?? "—"}</td>
                     <td className="px-5 py-3 text-slate-600">{v.reason || v.diagnosis || "—"}</td>
                     <td className="px-5 py-3 text-slate-600">

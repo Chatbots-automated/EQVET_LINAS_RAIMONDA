@@ -50,6 +50,15 @@ export function lineTotalCents(qtyMilli: number, priceCents: number): number {
   return sign * Math.floor((Math.abs(product) + 500) / 1000);
 }
 
+/** VAT amount on a net amount at `ratePct` % (whole percent), rounded half-up. */
+export const vatOnNetCents = (netCents: number, ratePct: number) => Math.floor((netCents * ratePct + 50) / 100);
+
+/** Net amount contained in a gross (VAT-inclusive) amount at `ratePct` %, rounded half-up. */
+export function netFromGrossCents(grossCents: number, ratePct: number): number {
+  const divisor = 100 + ratePct;
+  return Math.floor((grossCents * 200 + divisor) / (2 * divisor));
+}
+
 function numberToPlainString(n: number): string {
   // Avoid exponent notation (1e-7) for tiny/huge floats coming from numeric columns.
   return Number.isInteger(n) ? String(n) : n.toFixed(6);
